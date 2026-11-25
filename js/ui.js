@@ -133,7 +133,7 @@
     return '<div class="d-flex justify-content-between align-items-start gap-3">' +
       '<div><div class="rotulo">' + g.id + '</div><div class="titulo fs-5">' + esc(UI.tituloFase(estado, g)) + '</div>' +
       '<div class="texto-2 small">' + esc(UI.descricaoJogo(estado, g).replace(UI.tituloFase(estado, g), '').replace(/^ · /, '')) + '</div></div>' +
-      '<form method="dialog"><button class="btn-mini" aria-label="Fechar">✕</button></form></div>' +
+      '<button type="button" class="btn-mini" data-fechar aria-label="Fechar">✕</button></div>' +
       '<div class="mt-3 d-flex flex-column gap-1"><div class="fs-6 fw-semibold">' + esc(a) + '</div><div class="texto-2 small">contra</div><div class="fs-6 fw-semibold">' + esc(b) + '</div></div>' +
       (linhas ? '<div class="mt-3">' + linhas + '</div>' : '') + resumo;
   };

@@ -34,26 +34,27 @@
     var nova = app.querySelector('.chave-rolagem');
     if (nova && rolagemX) nova.scrollLeft = rolagemX;
     // se um diálogo de jogo está aberto, atualiza o conteúdo dele também
-    if (dialogo.open && dialogo.dataset.jogo) mostrarJogo(dialogo.dataset.jogo, true);
+    if (dialogo.open && dialogo.dataset.aberto) mostrarJogo(dialogo.dataset.aberto, true);
   }
 
   function mostrarJogo(id, soAtualizar) {
     var g = estado.jogos.filter(function (j) { return j.id === id; })[0];
     if (!g) return;
     dialogo.innerHTML = UI.detalheJogo(estado, g);
-    dialogo.dataset.jogo = id;
+    dialogo.dataset.aberto = id; // não usar data-jogo aqui: o clique abaixo trata [data-jogo] como "abrir jogo"
     if (!soAtualizar && !dialogo.open) dialogo.showModal();
   }
 
   document.addEventListener('click', function (ev) {
     if (ev.target.closest('[data-acao="limpar-cache"]')) { Estado.limparCache(); return; }
+    if (ev.target.closest('[data-fechar]')) { dialogo.close(); return; }
     var aba = ev.target.closest('[data-aba]');
     if (aba) { abaChave = aba.getAttribute('data-aba'); renderizar(); return; }
     var jogo = ev.target.closest('[data-jogo]');
     if (jogo) mostrarJogo(jogo.getAttribute('data-jogo'));
   });
   dialogo.addEventListener('click', function (ev) { if (ev.target === dialogo) dialogo.close(); });
-  dialogo.addEventListener('close', function () { delete dialogo.dataset.jogo; });
+  dialogo.addEventListener('close', function () { delete dialogo.dataset.aberto; });
   window.addEventListener('hashchange', function () { renderizar(); window.scrollTo(0, 0); });
 
   Estado.iniciar()

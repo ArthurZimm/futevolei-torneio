@@ -166,9 +166,49 @@
   // ---------- 1. configuração ----------
 
   function contadorTexto(campo) {
-    var n = estado.config.numDuplas, c = Sorteio.nomes(estado.entrada[campo]).length;
-    var alvo = campo === 'lista' ? 2 * n : n;
-    return c + ' de ' + alvo;
+    var c = Sorteio.nomes(estado.entrada[campo]).length;
+    if (campo === 'duplas') return c + (c === 1 ? ' dupla' : ' duplas');
+    return c + (c === 1 ? ' jogador' : ' jogadores');
+  }
+
+  // Quantas duplas dá com o que está escrito, e o que falta acertar (os dois potes iguais, lista par, 4 a 32).
+  function resumoEntrada() {
+    var c = estado.config, e = estado.entrada, cont = function (t) { return Sorteio.nomes(t).length; }, n;
+    var min = Sorteio.MIN_DUPLAS, max = Sorteio.MAX_DUPLAS;
+    if (c.modo === 'prontas') {
+      n = cont(e.duplas);
+    } else if (c.usarPotes) {
+      var a = cont(e.pote1), b = cont(e.pote2);
+      if (a !== b) return { ok: false, texto: 'O pote 1 tem ' + a + ' e o pote 2 tem ' + b + '. Os dois precisam ter a mesma quantidade.' };
+      n = a;
+    } else {
+      var t = cont(e.lista);
+      if (t % 2) return { ok: false, texto: t + ' jogadores: precisa de uma quantidade par para formar as duplas.' };
+      n = t / 2;
+    }
+    if (n === 0) return { ok: false, texto: 'Cole os jogadores abaixo. Dá para sortear de ' + min + ' a ' + max + ' duplas.' };
+    if (n < min || n > max) return { ok: false, texto: n + ' duplas. O sorteio precisa de ' + min + ' a ' + max + '.' };
+    return { ok: true, texto: n + ' duplas' + (n % 2 ? ' · número ímpar: uma dupla passa direto para a próxima fase' : '') };
+  }
+
+  function htmlResumo() {
+    var r = resumoEntrada();
+    return '<div id="resumo-entrada" class="small fw-medium" style="color:' + (r.ok ? 'var(--destaque)' : 'var(--perdedores)') + '">' + esc(r.texto) + '</div>';
+  }
+
+  function atualizarResumo(campo) {
+    var cnt = document.getElementById('cnt-' + campo);
+    if (cnt) cnt.textContent = contadorTexto(campo);
+    var box = document.getElementById('resumo-entrada'), r = resumoEntrada();
+    if (box) {
+      box.textContent = r.texto;
+      box.style.color = r.ok ? 'var(--destaque)' : 'var(--perdedores)';
+    }
+  }
+
+  function botoesImportarSorteio(classe) {
+    return '<label class="btn ' + (classe || 'btn-fantasma') + ' d-flex align-items-center justify-content-center m-0" for="arquivo-sorteio">Importar sorteio (JSON)</label>' +
+      '<input id="arquivo-sorteio" type="file" accept="application/json,.json" class="visually-hidden" data-campo="importar-sorteio">';
   }
 
   function telaConfig() {
@@ -191,31 +231,40 @@
     return cabecalho('Configuração') + abasAdmin() + passos(0, ['Jogadores', 'Duplas', 'Chave'], 0) +
       '<div class="d-flex flex-column gap-3">' +
       '<label class="d-flex flex-column gap-1"><span class="rotulo">Nome do torneio</span><input class="form-control" data-campo="nome" value="' + esc(c.nome) + '" maxlength="60"></label>' +
-      '<label class="d-flex flex-column gap-1"><span class="rotulo">Número de duplas (4 a 16)</span>' +
-      '<input class="form-control" type="number" inputmode="numeric" min="4" max="16" data-campo="numDuplas" value="' + c.numDuplas + '"></label>' +
       '<fieldset class="d-flex flex-column gap-2"><legend class="rotulo fs-6 mb-0">Como entram os jogadores</legend>' +
       '<div class="form-check"><input class="form-check-input" type="radio" name="modo" id="modo-avulsos" value="avulsos" data-campo="modo"' + (c.modo === 'avulsos' ? ' checked' : '') + '><label class="form-check-label" for="modo-avulsos">Jogadores avulsos (o site sorteia as duplas)</label></div>' +
       '<div class="form-check"><input class="form-check-input" type="radio" name="modo" id="modo-prontas" value="prontas" data-campo="modo"' + (c.modo === 'prontas' ? ' checked' : '') + '><label class="form-check-label" for="modo-prontas">Duplas já formadas (o site sorteia só a ordem na chave)</label></div></fieldset>' +
       (c.modo === 'avulsos' ? '<div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" id="usarPotes" data-campo="usarPotes"' + (c.usarPotes ? ' checked' : '') + '><label class="form-check-label" for="usarPotes">Usar dois potes (equilibra as duplas)</label></div>' : '') +
       '<div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" id="finalComReset" data-campo="finalComReset"' + (c.finalComReset ? ' checked' : '') + '><label class="form-check-label" for="finalComReset">Grande final com reset (jogo extra se a dupla de baixo vencer)</label></div>' +
-      campos + listaDeErros() +
-      '<button class="btn btn-destaque" data-acao="ir-sorteio">Ir para o sorteio</button></div>';
+      campos + htmlResumo() + listaDeErros() +
+      '<button class="btn btn-destaque" data-acao="ir-sorteio">Ir para o sorteio</button>' +
+      botoesImportarSorteio() +
+      '<p class="small texto-2 mb-0">O número de duplas vem da lista acima. Já tem um sorteio salvo em arquivo? Importe aqui para pular o sorteio.</p></div>';
   }
-
-  function lerNumero(v) { var n = parseInt(v, 10); return isNaN(n) ? 0 : n; }
 
   function irParaSorteio() {
     var c = estado.config, e = estado.entrada;
-    var r = Sorteio.validar({ n: c.numDuplas, modo: c.modo, usarPotes: c.usarPotes, pote1: e.pote1, pote2: e.pote2, lista: e.lista, duplas: e.duplas });
+    var r = Sorteio.validar({ modo: c.modo, usarPotes: c.usarPotes, pote1: e.pote1, pote2: e.pote2, lista: e.lista, duplas: e.duplas });
     erros = r.erros;
     if (erros.length) { render(); return; }
-    mutar(function (x) {
-      x.jogadores = r.jogadores;
-      x.duplas = Sorteio.sortear({ jogadores: r.jogadores, pares: r.pares, usarPotes: x.config.usarPotes && x.config.modo === 'avulsos' });
-      x.sorteio = { revelados: 0 };
-      x.jogos = []; x.historico = [];
-      x.fase = 'sorteio';
-    });
+    mutar(function (x) { sortearEm(x, r); x.fase = 'sorteio'; });
+  }
+
+  // Faz o sorteio das duplas e da ordem em que as cartas viram, a partir de uma entrada já validada.
+  function sortearEm(x, r) {
+    var comPotes = x.config.usarPotes && x.config.modo === 'avulsos';
+    x.config.numDuplas = r.n;
+    x.jogadores = r.jogadores;
+    x.duplas = Sorteio.sortear({ jogadores: r.jogadores, pares: r.pares, usarPotes: comPotes });
+    x.sorteio = { revelados: 0, ordem: Sorteio.ordemDeRevelacao(x.duplas, x.jogadores) };
+    x.jogos = []; x.historico = [];
+  }
+
+  // Ordem em que as cartas viram: a guardada no sorteio, ou a ordem dos cabeças se não houver (estados antigos).
+  function ordemDasCartas() {
+    var n = estado.duplas.length, o = estado.sorteio && estado.sorteio.ordem;
+    if (Array.isArray(o) && o.length === n) return o;
+    return estado.duplas.map(function (d, i) { return i; });
   }
 
   // ---------- 2. sorteio ----------
@@ -231,11 +280,15 @@
     } else {
       potes = '<div class="rotulo">Jogadores · ' + estado.jogadores.length + '</div><div class="d-flex flex-wrap gap-2">' + chips(estado.jogadores) + '</div>';
     }
-    var cartas = estado.duplas.map(function (d, i) {
-      var virada = i < rev && i !== animarCarta;
-      return '<div class="col-6"><div class="carta' + (virada ? ' virada' : '') + (i === rev - 1 ? ' ultima' : '') + '" data-carta="' + i + '"><div class="carta-miolo">' +
+    // as cartas viram na ordem do sorteio (ordem das cartas); o cabeça de chave de cada dupla aparece na carta
+    var passamDireto = Sorteio.vagasDaChave(n) - n;
+    var cartas = ordemDasCartas().map(function (idx, k) {
+      var d = estado.duplas[idx], aberta = k < rev;
+      var virada = aberta && k !== animarCarta;
+      var etiqueta = aberta ? ordinal(k + 1) + ' sorteada · cabeça ' + d.seed + (d.seed <= passamDireto ? ' · passa direto' : '') : '';
+      return '<div class="col-6"><div class="carta' + (virada ? ' virada' : '') + (k === rev - 1 ? ' ultima' : '') + '" data-carta="' + k + '"><div class="carta-miolo">' +
         '<div class="carta-verso" aria-label="Carta ainda não revelada">?</div>' +
-        '<div class="carta-frente"><span class="ordem">' + ordinal(i + 1) + ' sorteada · cabeça ' + (i + 1) + '</span><span class="fw-medium" style="font-size:14px">' + (i < rev ? esc(d.nome) : '') + '</span></div></div></div></div>';
+        '<div class="carta-frente"><span class="ordem">' + esc(etiqueta) + '</span><span class="fw-medium" style="font-size:14px">' + (aberta ? esc(d.nome) : '') + '</span></div></div></div></div>';
     }).join('');
     return cabecalho('Sorteio') + abasAdmin() + passos(1, ['Jogadores', 'Duplas', 'Chave'], 1) +
       '<div class="d-flex flex-column gap-3"><section class="d-flex flex-column gap-2">' + potes + '</section>' +
@@ -245,6 +298,8 @@
       (todas ? '' : '<button class="btn btn-fantasma" data-acao="revelar-todas">Revelar todas de uma vez</button>') +
       '<div class="row g-2"><div class="col-6"><button class="btn btn-fantasma w-100" data-acao="sortear-de-novo">Sortear de novo</button></div>' +
       '<div class="col-6"><button class="btn btn-sec w-100 h-100" data-acao="confirmar-sorteio"' + (todas ? '' : ' disabled') + '>Confirmar e configurar jogos</button></div></div>' +
+      '<div class="row g-2"><div class="col-6"><button class="btn btn-fantasma w-100" data-acao="baixar-sorteio">Baixar sorteio (JSON)</button></div>' +
+      '<div class="col-6 d-flex flex-column">' + botoesImportarSorteio('btn-fantasma h-100') + '</div></div>' +
       '<button class="btn btn-link texto-2" data-acao="voltar-config">Voltar e editar os jogadores</button></div></div>';
   }
 
@@ -460,6 +515,16 @@
     return [pa, pb];
   }
 
+  // Baixa um objeto como arquivo .json (o nome ganha a data de hoje).
+  function baixarJson(objeto, nomeBase) {
+    var blob = new Blob([JSON.stringify(objeto, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = nomeBase + '-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
   var acoes = {
     'tentar-salvar': function () { agendarSalvar(0); },
     'limpar-cache': function () {
@@ -483,9 +548,13 @@
         mutar(function (x) {
           var prontas = x.config.modo === 'prontas';
           x.duplas = Sorteio.sortear({ jogadores: x.jogadores, pares: prontas ? x.duplas.map(function (d) { return d.jogadores; }) : [], usarPotes: x.config.usarPotes && !prontas });
-          x.sorteio = { revelados: 0 };
+          x.sorteio = { revelados: 0, ordem: Sorteio.ordemDeRevelacao(x.duplas, x.jogadores) };
         });
       });
+    },
+    'baixar-sorteio': function () {
+      baixarJson(Sorteio.exportarSorteio(estado), 'sorteio-torneio-box-castelandia');
+      UI.toast('Sorteio baixado.');
     },
     'confirmar-sorteio': function () {
       confirmar('Confirmar o sorteio?', 'A ordem das duplas na chave fica travada e a chave é gerada. Depois você configura os jogos.', 'Confirmar sorteio').then(function (ok) {
@@ -544,14 +613,7 @@
       });
     },
     mover: function (el) { mutar(function (x) { Chave.moverNaFila(x, el.dataset.jogoId, Number(el.dataset.dir)); }); },
-    exportar: function () {
-      var blob = new Blob([JSON.stringify(estado, null, 2)], { type: 'application/json' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'torneio-box-castelandia-' + new Date().toISOString().slice(0, 10) + '.json';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-    },
+    exportar: function () { baixarJson(estado, 'torneio-box-castelandia'); },
     zerar: function () {
       var nome = estado.config.nome;
       confirmar('Zerar o torneio?', 'Tudo será apagado: ' + esc(nome) + ', sorteio, chave e resultados.', 'Zerar tudo', true).then(function (ok) {
@@ -592,8 +654,7 @@
     if (!campo || !estado) return;
     if (['pote1', 'pote2', 'lista', 'duplas'].indexOf(campo) !== -1) {
       estado.entrada[campo] = el.value;
-      var cnt = document.getElementById('cnt-' + campo);
-      if (cnt) cnt.textContent = contadorTexto(campo);
+      atualizarResumo(campo);
     } else if (campo === 'rapido-a') rapido.a = el.value;
     else if (campo === 'rapido-b') rapido.b = el.value;
     else if (campo === 'zerar') {
@@ -607,11 +668,62 @@
     if (!campo || !estado) return;
     if (['pote1', 'pote2', 'lista', 'duplas'].indexOf(campo) !== -1) { estado.entrada[campo] = el.value; agendarSalvar(300); return; }
     if (campo === 'nome') { mutar(function (x) { x.config.nome = el.value.trim() || 'Torneio Box Castelândia'; }, { semRender: true }); return; }
-    if (campo === 'numDuplas') { mutar(function (x) { x.config.numDuplas = lerNumero(el.value); }); return; }
     if (campo === 'modo') { mutar(function (x) { x.config.modo = el.value; }); return; }
     if (campo === 'usarPotes' || campo === 'finalComReset') { mutar(function (x) { x.config[campo] = el.checked; }); return; }
     if (campo === 'importar') importar(el);
+    if (campo === 'importar-sorteio') importarSorteio(el);
   });
+
+  // Texto que volta para as caixas de "Jogadores" quando um sorteio é importado (para dar para editar depois).
+  function entradaDoSorteio(s) {
+    var nomeDe = {};
+    s.jogadores.forEach(function (j) { nomeDe[j.id] = j.nome; });
+    var entrada = { pote1: '', pote2: '', lista: '', duplas: '' };
+    var doPote = function (p) { return s.jogadores.filter(function (j) { return j.pote === p; }).map(function (j) { return j.nome; }).join('\n'); };
+    if (s.config.modo === 'prontas') entrada.duplas = s.duplas.map(function (d) { return nomeDe[d.jogadores[0]] + ' / ' + nomeDe[d.jogadores[1]]; }).join('\n');
+    else if (s.config.usarPotes) { entrada.pote1 = doPote(1); entrada.pote2 = doPote(2); }
+    else entrada.lista = s.jogadores.map(function (j) { return j.nome; }).join('\n');
+    return entrada;
+  }
+
+  // Importa um arquivo de sorteio: confere tudo antes de mexer em qualquer coisa.
+  function importarSorteio(el) {
+    var arq = el.files && el.files[0];
+    el.value = '';
+    if (!arq) return;
+    if (estado.fase === 'andamento' || estado.fase === 'encerrado') {
+      UI.toast('O torneio já começou. Para trocar o sorteio, zere o torneio em Manutenção.', 'erro');
+      return;
+    }
+    var leitor = new FileReader();
+    leitor.onload = function () {
+      var obj;
+      try { obj = JSON.parse(leitor.result); } catch (e) { UI.toast('Esse arquivo não é um JSON válido.', 'erro'); return; }
+      var r = Sorteio.lerSorteio(obj);
+      if (r.erros.length) { UI.toast(r.erros[0], 'erro'); return; }
+      var s = r.sorteio;
+      var aplicar = function () {
+        mutar(function (x) {
+          x.config.modo = s.config.modo; x.config.usarPotes = s.config.usarPotes; x.config.finalComReset = s.config.finalComReset;
+          if (s.nome) x.config.nome = s.nome;
+          x.config.numDuplas = s.duplas.length; x.config.formatos = {};
+          x.jogadores = s.jogadores; x.duplas = s.duplas; x.entrada = entradaDoSorteio(s);
+          x.sorteio = { revelados: s.duplas.length, ordem: s.ordem };
+          x.jogos = []; x.historico = []; x.filaManual = false; x.ultimoJogo = null;
+          x.fase = 'sorteio';
+        });
+        tela = 'torneio';
+        erros = [];
+        render();
+        UI.toast('Sorteio importado: ' + s.duplas.length + ' duplas.');
+      };
+      if (estado.duplas.length) {
+        confirmar('Importar este sorteio?', 'O sorteio atual será substituído por um com ' + s.duplas.length + ' duplas' + (s.nome ? ' ("' + esc(s.nome) + '")' : '') + '.', 'Importar', true)
+          .then(function (sim) { if (sim) aplicar(); });
+      } else aplicar();
+    };
+    leitor.readAsText(arq);
+  }
 
   function importar(el) {
     var arq = el.files && el.files[0];

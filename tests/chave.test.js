@@ -90,7 +90,7 @@ test('cruzamento padrão com 8 duplas (1×8, 4×5, 2×7, 3×6) e ligações da P
 });
 
 test('fasesDoEstado conta os jogos reais por fase: soma 2N − 2, sem o reset nem byes', () => {
-  for (let n = 4; n <= 16; n++) {
+  for (let n = 4; n <= 32; n++) {
     const e = novoTorneio(n);
     const fases = Chave.fasesDoEstado(e);
     assert.equal(fases.reduce((s, f) => s + f.jogos, 0), 2 * n - 2, 'N=' + n);
@@ -104,8 +104,9 @@ test('fases da chave por número de duplas', () => {
     ['V-R1', 'V-R2', 'V-F', 'P-R1', 'P-R2', 'P-R3', 'P-F', 'GF']);
   assert.deepEqual(Chave.fasesDaChave(4).map((f) => f.id), ['V-R1', 'V-F', 'P-R1', 'P-F', 'GF']);
   assert.equal(Chave.fasesDaChave(16).filter((f) => f.chave === 'P').length, 6);
-  assert.throws(() => Chave.fasesDaChave(3), /4 a 16/);
-  assert.throws(() => Chave.fasesDaChave(17), /4 a 16/);
+  assert.equal(Chave.fasesDaChave(32).filter((f) => f.chave === 'P').length, 8);
+  assert.throws(() => Chave.fasesDaChave(3), /4 a 32/);
+  assert.throws(() => Chave.fasesDaChave(33), /4 a 32/);
 });
 
 test('byes: 6 duplas, os cabeças 1 e 2 passam direto na primeira rodada', () => {
@@ -128,9 +129,9 @@ test('byes: 5 duplas (3 byes), os bye-contra-bye da P se resolvem sozinhos', () 
   assert.equal(Chave.fila(e).some((g) => g.bye), false);
 });
 
-// ---------- contagem e integridade, N de 4 a 16 ----------
+// ---------- contagem e integridade, N de 4 a 32 ----------
 
-for (let n = 4; n <= 16; n++) {
+for (let n = 4; n <= 32; n++) {
   test(`N=${n}: nº de jogos, derrotas e classificação em 60 torneios aleatórios`, () => {
     for (let s = 1; s <= 60; s++) {
       const rng = rngComSemente(n * 1000 + s);
@@ -169,7 +170,7 @@ for (let n = 4; n <= 16; n++) {
 }
 
 test('sem reset: vencedor da grande final é campeão; com reset, jogo extra só se o de baixo vencer', () => {
-  for (let n = 4; n <= 16; n++) {
+  for (let n = 4; n <= 32; n++) {
     // de cima vence: sem jogo extra
     let e = novoTorneio(n);
     simularAteGF(e, 'A');
@@ -213,7 +214,7 @@ function simularAteGF(e, lado) {
 // ---------- fila ----------
 
 test('fila: só joga quem já tem as duas duplas; nunca trava; evita repetir dupla quando dá', () => {
-  for (let n = 4; n <= 16; n++) {
+  for (let n = 4; n <= 32; n++) {
     for (let s = 1; s <= 20; s++) {
       const rng = rngComSemente(777 + n * 31 + s);
       const e = novoTorneio(n);
@@ -358,8 +359,8 @@ test('placar parcial (ponto a ponto) marca em quadra e não entra no histórico'
 
 // ---------- desfazer ----------
 
-test('desfazer: cada passo volta exatamente ao estado anterior (N=4..16, MD1/MD3, WO, reset)', () => {
-  for (let n = 4; n <= 16; n++) {
+test('desfazer: cada passo volta exatamente ao estado anterior (N=4..32, MD1/MD3, WO, reset)', () => {
+  for (let n = 4; n <= 32; n++) {
     for (let s = 1; s <= 8; s++) {
       const rng = rngComSemente(5000 + n * 13 + s);
       const e = novoTorneio(n, { atalho: s % 2 ? 'finaisMd3' : 'tudoMd3' });

@@ -48,8 +48,10 @@
     return s;
   }
 
+  var MIN_DUPLAS = 4, MAX_DUPLAS = 32;
+
   function validarNumDuplas(n) {
-    if (!Number.isInteger(n) || n < 4 || n > 16) throw new Error('A chave aceita de 4 a 16 duplas.');
+    if (!Number.isInteger(n) || n < MIN_DUPLAS || n > MAX_DUPLAS) throw new Error('A chave aceita de ' + MIN_DUPLAS + ' a ' + MAX_DUPLAS + ' duplas.');
   }
 
   // Quantidade de jogos da rodada k da chave de perdedores (k começa em 1).
@@ -574,7 +576,7 @@
 
   return {
     BYE: BYE, ATALHOS: ATALHOS,
-    estadoInicial: estadoInicial, tamanhoDaChave: tamanhoDaChave,
+    estadoInicial: estadoInicial, tamanhoDaChave: tamanhoDaChave, MIN_DUPLAS: MIN_DUPLAS, MAX_DUPLAS: MAX_DUPLAS,
     fasesDaChave: fasesDaChave, fasesDoEstado: fasesDoEstado,
     formatosDoAtalho: formatosDoAtalho, totalJogos: totalJogos,
     gerarJogos: gerarJogos, iniciarTorneio: iniciarTorneio,

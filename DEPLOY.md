@@ -47,7 +47,7 @@ Teste com dois celulares (ou um celular e um computador):
 ```bash
 npm install
 npm run dev     # http://localhost:3000  (senha do admin: Admin123)
-npm test        # 63 testes: regras da chave, sorteio e API
+npm test        # 94 testes: regras da chave, sorteio e API
 ```
 
 Sem Upstash, o servidor local guarda o torneio na memória (some ao reiniciar). Se as páginas forem abertas sem a pasta `/api`
