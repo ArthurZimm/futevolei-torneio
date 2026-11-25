@@ -5,8 +5,8 @@
  *
  * Regras da brincadeira (ver FAVORITOS):
  *   - com potes, se Arthur e Otávio caem em potes diferentes, eles formam dupla com CHANCE_DUPLA_FAVORITA;
- *   - dupla com um dos dois nunca é a primeira a ser revelada;
- *   - com número ímpar de duplas, uma dupla com um dos dois passa direto (bye) para a próxima fase.
+ *   - dupla com um dos dois nunca é a primeira a ser revelada.
+ * Com número ímpar de duplas, quem passa direto (bye) é só questão de sorteio: os primeiros cabeças.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -144,20 +144,6 @@
     return null;
   }
 
-  // Com número ímpar de duplas, garante que uma dupla com um favorito caia num cabeça que passa direto.
-  function garantirByeParaFavorita(pares, porId, rng) {
-    var n = pares.length;
-    if (n % 2 === 0) return;
-    var byes = vagasDaChave(n) - n;
-    var favoritas = [];
-    pares.forEach(function (p, i) {
-      if (p.some(function (id) { return favorito(porId[id].nome); })) favoritas.push(i);
-    });
-    if (!favoritas.length || favoritas.some(function (i) { return i < byes; })) return;
-    var de = favoritas[Math.floor(rng() * favoritas.length)], para = Math.floor(rng() * byes);
-    var t = pares[de]; pares[de] = pares[para]; pares[para] = t;
-  }
-
   /*
    * Sorteia as duplas e a ordem delas na chave. Devolve [{ id, nome, jogadores: [idA, idB], seed }].
    * Com potes, cada dupla leva um jogador de cada pote. Com duplas prontas, só sorteia as posições.
@@ -186,9 +172,7 @@
       pares = [];
       for (var i = 0; i < todos.length; i += 2) pares.push([todos[i].id, todos[i + 1].id]);
     }
-    var ordenados = embaralhar(pares, rng);
-    garantirByeParaFavorita(ordenados, porId, rng);
-    return ordenados.map(function (p, idx) {
+    return embaralhar(pares, rng).map(function (p, idx) {
       return {
         id: 'd' + (idx + 1),
         nome: nomeDaDupla(porId[p[0]].nome, porId[p[1]].nome),

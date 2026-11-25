@@ -203,27 +203,22 @@ function duplasComBye(duplas, jogadores) {
     .map((g) => (g.duplaA === Chave.BYE ? g.duplaB : g.duplaA));
 }
 
-test('número ímpar de duplas: uma dupla com Arthur ou Otávio passa direto para a próxima fase', () => {
-  for (const n of [5, 7, 9, 11, 13, 15, 17, 25, 31]) {
-    const v = potesComFavoritos(n);
-    for (let s = 1; s <= 150; s++) {
-      const { duplas } = sortearPotes(v, s);
-      const comBye = duplasComBye(duplas, v.jogadores);
-      assert.equal(comBye.length, Sorteio.vagasDaChave(n) - n);
-      assert.ok(comBye.some((id) => ehFav(v, duplas.find((d) => d.id === id))), 'N=' + n + ' semente ' + s);
-    }
+test('número ímpar de duplas: quem passa direto é sorteio puro, sem favorecer a dupla de Arthur/Otávio', () => {
+  const v = potesComFavoritos(7);
+  let juntos = 0, juntosComBye = 0;
+  const N = 6000;
+  for (let s = 1; s <= N; s++) {
+    const { duplas } = sortearPotes(v, s);
+    const comBye = duplasComBye(duplas, v.jogadores);
+    assert.equal(comBye.length, Sorteio.vagasDaChave(7) - 7);
+    const dupla = duplas.find((d) => d.nome === 'Arthur / Otávio');
+    if (!dupla) continue;
+    juntos++;
+    if (comBye.includes(dupla.id)) juntosComBye++;
   }
-});
-
-test('o bye para a favorita também vale com duplas prontas e quando Arthur e Otávio jogam separados', () => {
-  const p = Sorteio.validar({ modo: 'prontas', duplas: 'Arthur / Bia\nCau / Dedé\nEdu / Fabi\nGabi / Hugo\nIvo / Otávio\nJana / Kleber\nLia / Mel' });
-  assert.equal(p.n, 7);
-  for (let s = 1; s <= 200; s++) {
-    const duplas = Sorteio.sortear({ jogadores: p.jogadores, pares: p.pares, usarPotes: false }, Sorteio.rngComSemente(s));
-    const comBye = duplasComBye(duplas, p.jogadores);
-    assert.equal(comBye.length, 1);
-    assert.ok(ehFav(p, duplas.find((d) => d.id === comBye[0])), 'semente ' + s);
-  }
+  // 1 bye entre 7 duplas: ~1/7 das vezes (14%), não "sempre"
+  const taxa = juntosComBye / juntos;
+  assert.ok(taxa > 0.10 && taxa < 0.19, 'taxa de bye da dupla Arthur/Otávio: ' + taxa);
 });
 
 test('número par de duplas: não força bye nenhum; ímpar sem favoritos: sorteio normal', () => {
