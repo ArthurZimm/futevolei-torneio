@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-process.env.ADMIN_PASSWORD = 'senha-de-teste';
-process.env.SESSION_SECRET = 'segredo-de-teste-123';
+// A senha (Admin123) e o segredo ficam fixos em lib/auth.js; o teste não define nada de ambiente.
+delete process.env.ADMIN_PASSWORD; delete process.env.SESSION_SECRET;
 delete process.env.VERCEL;
 delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.KV_REST_API_URL;
 
@@ -36,7 +36,7 @@ async function api(caminho, { metodo = 'GET', corpo, cookie, ip } = {}) {
 }
 
 async function entrar() {
-  const r = await api('/api/login', { metodo: 'POST', corpo: { senha: 'senha-de-teste' } });
+  const r = await api('/api/login', { metodo: 'POST', corpo: { senha: 'Admin123' } });
   assert.equal(r.status, 200);
   return r.setCookie.split(';')[0]; // "sessao=..."
 }
@@ -56,20 +56,20 @@ test('login: senha errada recusada, senha certa devolve cookie httpOnly/SameSite
   assert.equal((await api('/api/login', { metodo: 'POST', corpo: {} })).status, 401);
   assert.equal((await api('/api/login', { metodo: 'POST', corpo: { senha: 123 } })).status, 401);
 
-  const ok = await api('/api/login', { metodo: 'POST', corpo: { senha: 'senha-de-teste' } });
+  const ok = await api('/api/login', { metodo: 'POST', corpo: { senha: 'Admin123' } });
   assert.equal(ok.status, 200);
   assert.match(ok.setCookie, /^sessao=/);
   assert.match(ok.setCookie, /HttpOnly/);
   assert.match(ok.setCookie, /SameSite=Strict/);
   assert.match(ok.setCookie, /Max-Age=43200/);
   assert.doesNotMatch(ok.setCookie, /Secure/); // http local
-  assert.doesNotMatch(ok.setCookie, /senha-de-teste/);
+  assert.doesNotMatch(ok.setCookie, /Admin123/);
 });
 
 test('cookie Secure quando a requisição veio por https', async () => {
   const r = await fetch(base + '/api/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-Proto': 'https', 'X-Forwarded-For': novoIp() },
-    body: JSON.stringify({ senha: 'senha-de-teste' })
+    body: JSON.stringify({ senha: 'Admin123' })
   });
   assert.match(r.headers.get('set-cookie'), /; Secure/);
 });
@@ -157,8 +157,8 @@ test('limite de login: 5 tentativas por minuto por IP; outro IP não é afetado'
   const bloqueado = await api('/api/login', { metodo: 'POST', corpo: { senha: 'errada' }, ip });
   assert.equal(bloqueado.status, 429);
   // nem a senha certa passa enquanto estiver bloqueado
-  assert.equal((await api('/api/login', { metodo: 'POST', corpo: { senha: 'senha-de-teste' }, ip })).status, 429);
-  assert.equal((await api('/api/login', { metodo: 'POST', corpo: { senha: 'senha-de-teste' }, ip: novoIp() })).status, 200);
+  assert.equal((await api('/api/login', { metodo: 'POST', corpo: { senha: 'Admin123' }, ip })).status, 429);
+  assert.equal((await api('/api/login', { metodo: 'POST', corpo: { senha: 'Admin123' }, ip: novoIp() })).status, 200);
 });
 
 test('logout apaga o cookie', async () => {
@@ -186,16 +186,24 @@ test('senha e segredo nunca aparecem em nenhum arquivo servido ao navegador', as
   for (const pasta of ['js', 'css']) {
     for (const f of fs.readdirSync(path.join(__dirname, '..', pasta))) {
       const txt = fs.readFileSync(path.join(__dirname, '..', pasta, f), 'utf8');
-      assert.doesNotMatch(txt, /ADMIN_PASSWORD|SESSION_SECRET|senha-de-teste/, pasta + '/' + f);
+      assert.doesNotMatch(txt, /ADMIN_PASSWORD|SESSION_SECRET|Admin123|segredo-de-brincadeira/, pasta + '/' + f);
     }
   }
 });
 
-test('sem ADMIN_PASSWORD configurada o login falha (nunca aceita senha vazia)', async () => {
-  const guardada = process.env.ADMIN_PASSWORD;
-  delete process.env.ADMIN_PASSWORD;
+test('só a senha Admin123 entra: errada, parecida, vazia e variável de ambiente são recusadas', async () => {
+  process.env.ADMIN_PASSWORD = 'outra-senha'; // variável de ambiente não manda mais nada
   try {
-    const r = await api('/api/login', { metodo: 'POST', corpo: { senha: '' } });
-    assert.equal(r.status, 500);
-  } finally { process.env.ADMIN_PASSWORD = guardada; }
+    for (const senha of ['Admin', 'admin123', 'Admin123 ', '', 'outra-senha', 'qualquer coisa']) {
+      const r = await api('/api/login', { metodo: 'POST', corpo: { senha }, ip: novoIp() });
+      assert.equal(r.status, 401, JSON.stringify(senha));
+      assert.equal(r.setCookie, null, JSON.stringify(senha));
+    }
+    for (const corpo of [{}, { senha: 123 }, { senha: null }, null]) {
+      const r = await api('/api/login', { metodo: 'POST', corpo, ip: novoIp() });
+      assert.equal(r.status, 401, JSON.stringify(corpo));
+    }
+    const ok = await api('/api/login', { metodo: 'POST', corpo: { senha: 'Admin123' }, ip: novoIp() });
+    assert.equal(ok.status, 200);
+  } finally { delete process.env.ADMIN_PASSWORD; }
 });

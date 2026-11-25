@@ -44,8 +44,7 @@ function criarServidor() {
 }
 
 if (require.main === module) {
-  if (!process.env.ADMIN_PASSWORD) { process.env.ADMIN_PASSWORD = 'admin'; console.log('Senha do admin (desenvolvimento): admin'); }
-  if (!process.env.SESSION_SECRET) process.env.SESSION_SECRET = 'segredo-de-desenvolvimento';
+  console.log('Senha do admin: Admin123 (fixa em lib/auth.js)');
   const porta = Number(process.env.PORT || 3000);
   criarServidor().listen(porta, () => console.log(`Servidor local em http://localhost:${porta}  (admin: /admin)`));
 }

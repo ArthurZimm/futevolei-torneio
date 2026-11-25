@@ -236,7 +236,7 @@
       }
       h += '<a class="btn btn-sec d-flex align-items-center justify-content-center" href="#/chave">Ver chave completa</a>';
     }
-    return h + '</main>';
+    return h + '<button type="button" class="btn btn-link texto-2 small mt-2" data-acao="limpar-cache">Limpar cache</button></main>';
   };
 
   function derrotasTexto(estado, id) {

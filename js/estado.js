@@ -35,12 +35,26 @@
 
   function inicial() { return root.Chave.estadoInicial(); }
 
+  // O modo local não tem senha nenhuma, então só vale na máquina de quem está desenvolvendo.
+  // Num site publicado, se a API falhar a página mostra o erro em vez de abrir o admin sem senha.
+  function emDesenvolvimento() {
+    var loc = root.location || {}, h = loc.hostname || '';
+    return loc.protocol === 'file:' || h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || /\.localhost$/.test(h);
+  }
+
   Estado.iniciar = function () {
     if (Estado.modo) return Promise.resolve(Estado.modo);
     return fetch('/api/estado', { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
-      .then(function (j) { Estado.modo = j && 'mudou' in j ? 'api' : 'local'; })
-      .catch(function () { Estado.modo = 'local'; })
+      .then(function (r) {
+        return r.json().catch(function () { return null; }).then(function (j) {
+          if (j && 'mudou' in j) { Estado.modo = 'api'; return; }
+          if (emDesenvolvimento()) { Estado.modo = 'local'; return; }
+          throw ErroEstado('servidor', (j && j.erro) || 'O servidor não respondeu direito (HTTP ' + r.status + ').');
+        });
+      }, function () {
+        if (emDesenvolvimento()) { Estado.modo = 'local'; return; }
+        throw ErroEstado('rede', 'Sem conexão com o servidor.');
+      })
       .then(function () { return Estado.modo; });
   };
 
@@ -141,6 +155,24 @@
   };
 
   Estado.apagarLocal = function () { try { root.localStorage.removeItem(CHAVE_LOCAL); } catch (e) { /* ignora */ } };
+
+  // Limpa o que este navegador guardou (dados do modo local, sessionStorage, Cache Storage, service workers)
+  // e recarrega com um endereço novo, para não reaproveitar arquivos em cache. Não mexe no torneio do
+  // servidor nem no cookie de login (que é httpOnly e o JavaScript nem enxerga).
+  Estado.limparCache = function () {
+    Estado.apagarLocal();
+    try { root.sessionStorage.clear(); } catch (e) { /* ignora */ }
+    var tarefas = [];
+    if (root.caches && root.caches.keys) {
+      tarefas.push(root.caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return root.caches.delete(k); })); }));
+    }
+    if (root.navigator && root.navigator.serviceWorker && root.navigator.serviceWorker.getRegistrations) {
+      tarefas.push(root.navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+    }
+    return Promise.all(tarefas.map(function (t) { return t.catch(function () { /* ignora */ }); })).then(function () {
+      root.location.replace(root.location.pathname + '?limpo=' + Date.now() + (root.location.hash || ''));
+    });
+  };
 
   root.Estado = Estado;
 })(window);

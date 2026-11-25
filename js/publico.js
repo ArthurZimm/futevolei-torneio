@@ -46,6 +46,7 @@
   }
 
   document.addEventListener('click', function (ev) {
+    if (ev.target.closest('[data-acao="limpar-cache"]')) { Estado.limparCache(); return; }
     var aba = ev.target.closest('[data-aba]');
     if (aba) { abaChave = aba.getAttribute('data-aba'); renderizar(); return; }
     var jogo = ev.target.closest('[data-jogo]');
@@ -64,6 +65,6 @@
     })
     .catch(function (e) {
       app.innerHTML = '<div class="cartao p-4 text-center my-5"><div class="titulo fs-5 mb-1">Não deu para carregar</div><div class="texto-2">' + UI.esc(e.message) + '</div>' +
-        '<button class="btn btn-sec mt-3" onclick="location.reload()">Tentar de novo</button></div>';
+        '<button class="btn btn-sec mt-3" onclick="location.reload()">Tentar de novo</button> <button class="btn btn-fantasma mt-3" onclick="Estado.limparCache()">Limpar cache</button></div>';
     });
 })();

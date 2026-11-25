@@ -159,7 +159,8 @@
       '<label class="d-flex flex-column gap-1"><span class="rotulo">Senha do administrador</span>' +
       '<input id="senha" type="password" class="form-control form-control-lg" autocomplete="current-password" required autofocus></label>' +
       '<button class="btn btn-destaque" type="submit">Entrar</button>' +
-      '<p class="small texto-2 mb-0">Só quem tem a senha altera o torneio. Todo mundo pode acompanhar pelo site.</p></form>';
+      '<p class="small texto-2 mb-0">Só quem tem a senha altera o torneio. Todo mundo pode acompanhar pelo site.</p>' +
+      '<button type="button" class="btn btn-link texto-2 small p-0" data-acao="limpar-cache">Limpar cache</button></form>';
   }
 
   // ---------- 1. configuração ----------
@@ -420,6 +421,10 @@
       '<p class="small texto-2 mb-1">Apaga sorteio, chave e resultados. Não dá para desfazer. Para confirmar, digite o nome do torneio: <strong class="text-white">' + esc(nome) + '</strong></p>' +
       '<input class="form-control" data-campo="zerar" placeholder="Nome do torneio" autocomplete="off">' +
       '<button class="btn btn-perigo" data-acao="zerar" id="btn-zerar" disabled>Zerar torneio</button></section>' +
+      '<section class="cartao p-3 d-flex flex-column gap-2"><div class="fw-semibold">Cache deste aparelho</div>' +
+      '<p class="small texto-2 mb-1">Apaga o que este navegador guardou e recarrega a página. Resolve tela velha ou dados que não atualizam. ' +
+      (Estado.modo === 'local' ? '<strong class="text-white">No modo local isso apaga o torneio, porque ele só existe neste navegador.</strong>' : 'O torneio salvo no servidor não é apagado.') + '</p>' +
+      '<button class="btn btn-sec" data-acao="limpar-cache">Limpar cache</button></section>' +
       '<section class="cartao p-3 d-flex flex-column gap-2"><div class="fw-semibold">Sessão</div>' +
       '<div class="small texto-2">Modo: ' + (Estado.modo === 'api' ? 'servidor (Vercel)' : 'local (só neste navegador)') + (estado.atualizadoEm ? ' · última alteração ' + new Date(estado.atualizadoEm).toLocaleString('pt-BR') : '') + '</div>' +
       '<button class="btn btn-fantasma" data-acao="sair">Sair do modo admin</button></section></div>';
@@ -457,6 +462,11 @@
 
   var acoes = {
     'tentar-salvar': function () { agendarSalvar(0); },
+    'limpar-cache': function () {
+      var local = Estado.modo === 'local';
+      confirmar('Limpar o cache?', local ? 'Está no modo local: o torneio guardado neste navegador será apagado.' : 'Apaga os dados guardados neste navegador e recarrega a página. O torneio no servidor continua salvo.', 'Limpar cache', local)
+        .then(function (ok) { if (ok) Estado.limparCache(); });
+    },
     sair: function () { Estado.sair().then(function () { logado = false; estado = null; render(); }); },
     tela: function (el) { tela = el.dataset.tela; render(); window.scrollTo(0, 0); },
     'ir-sorteio': irParaSorteio,
@@ -640,7 +650,7 @@
     if (!admin) { logado = false; render(); return; }
     return iniciarSessao();
   }).catch(function (e) {
-    app.innerHTML = '<div class="cartao p-4 text-center my-5"><div class="titulo fs-5 mb-1">Não deu para carregar</div><div class="texto-2">' + esc(e.message) + '</div><button class="btn btn-sec mt-3" onclick="location.reload()">Tentar de novo</button></div>';
+    app.innerHTML = '<div class="cartao p-4 text-center my-5"><div class="titulo fs-5 mb-1">Não deu para carregar</div><div class="texto-2">' + esc(e.message) + '</div><button class="btn btn-sec mt-3" onclick="location.reload()">Tentar de novo</button> <button class="btn btn-fantasma mt-3" onclick="Estado.limparCache()">Limpar cache</button></div>';
   });
 
   // Só para depuração/testes no navegador
