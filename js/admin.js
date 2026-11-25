@@ -459,7 +459,8 @@
         return '<div class="linha-pos"><span class="pos">' + l.pos + '</span><span class="flex-grow-1">' + l.duplas.map(function (d) { return esc(Chave.nomeDupla(estado, d)); }).join(' · ') + '</span><span class="small texto-2">' + esc(l.motivo) + '</span></div>';
       }).join('') + '</section>' +
       '<button class="btn btn-fantasma" data-acao="desfazer">Desfazer último resultado</button>' +
-      '<a class="btn btn-sec" href="index.html#/podio" target="_blank" rel="noopener">Ver pódio no site</a></div>';
+      '<a class="btn btn-sec" href="index.html#/podio" target="_blank" rel="noopener">Ver pódio no site</a>' +
+      '<button class="btn btn-destaque" data-acao="novo-torneio">Novo torneio</button></div>';
   }
 
   // ---------- manutenção ----------
@@ -468,6 +469,8 @@
     var nome = estado.config.nome;
     return cabecalho('Manutenção') + abasAdmin() +
       '<div class="d-flex flex-column gap-3">' +
+      '<section class="cartao p-3 d-flex flex-column gap-2"><div class="fw-semibold">Novo torneio</div><p class="small texto-2 mb-1">Começa outro torneio do zero (jogadores, sorteio e chave). Dá para baixar um backup do atual antes.</p>' +
+      '<button class="btn btn-destaque" data-acao="novo-torneio">Novo torneio</button></section>' +
       '<section class="cartao p-3 d-flex flex-column gap-2"><div class="fw-semibold">Backup</div><p class="small texto-2 mb-1">Baixe o torneio inteiro num arquivo. Serve para guardar ou levar para outro lugar.</p>' +
       '<button class="btn btn-sec" data-acao="exportar">Exportar JSON</button>' +
       '<label class="btn btn-fantasma d-flex align-items-center justify-content-center m-0" for="arquivo-import">Importar JSON</label>' +
@@ -618,12 +621,35 @@
       var nome = estado.config.nome;
       confirmar('Zerar o torneio?', 'Tudo será apagado: ' + esc(nome) + ', sorteio, chave e resultados.', 'Zerar tudo', true).then(function (ok) {
         if (!ok) return;
-        mutar(function (x) { var novo = Chave.estadoInicial(); novo.versao = x.versao; Object.keys(x).forEach(function (k) { delete x[k]; }); Object.assign(x, novo); });
-        tela = 'torneio';
-        render();
+        recomecar();
+      });
+    },
+    // Começa outro torneio do zero. Oferece guardar um backup do atual antes, já que o novo substitui o salvo.
+    'novo-torneio': function () {
+      var andou = estado.fase !== 'config' || estado.duplas.length > 0;
+      var texto = andou
+        ? 'O torneio "' + estado.config.nome + '" (' + (estado.fase === 'encerrado' ? 'encerrado' : 'em andamento') + ') será substituído por um torneio vazio.'
+        : 'Os jogadores digitados serão apagados e o torneio volta ao início.';
+      escolher('Começar um novo torneio?', texto + (andou ? ' Quer baixar um backup dele antes?' : ''), andou
+        ? [{ valor: 'backup', rotulo: 'Baixar backup e começar novo' }, { valor: 'sem', rotulo: 'Começar novo sem backup' }]
+        : [{ valor: 'sem', rotulo: 'Começar novo' }]
+      ).then(function (v) {
+        if (v !== 'backup' && v !== 'sem') return;
+        if (v === 'backup') baixarJson(estado, 'torneio-box-castelandia');
+        recomecar();
+        UI.toast('Novo torneio criado. Cadastre os jogadores.');
       });
     }
   };
+
+  // Troca o estado por um torneio vazio (mantendo a versão para o salvamento não dar conflito).
+  function recomecar() {
+    mutar(function (x) { var novo = Chave.estadoInicial(); novo.versao = x.versao; Object.keys(x).forEach(function (k) { delete x[k]; }); Object.assign(x, novo); });
+    tela = 'torneio';
+    erros = [];
+    rapido = { jogo: null, aberto: false, venc: null, a: '', b: '' };
+    render();
+  }
 
   // Mostra quem venceu e qual o próximo jogo, depois de lançar um resultado.
   function avisarResultado(id) {
