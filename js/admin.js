@@ -1,0 +1,648 @@
+/*
+ * Painel do administrador. Fluxo: login -> configuração -> sorteio -> configurar jogos -> iniciar -> placar.
+ * O estado vive em memória; toda alteração passa por mutar(), que aplica numa cópia (se der erro, nada muda),
+ * redesenha a tela e agenda o salvamento (uma fila só, com versão, para dois toques seguidos não se atropelarem).
+ */
+(function () {
+  'use strict';
+  var esc = UI.esc;
+  var app = document.getElementById('app'), dlg = document.getElementById('dlg');
+
+  var estado = null;
+  var tela = 'torneio'; // 'torneio' | 'manutencao'
+  var logado = false;
+  var salvamento = { estado: 'ok', ocupado: false, sujo: false, timer: null, erro: '' };
+  var animarCarta = -1;
+  var rapido = { jogo: null, aberto: false, venc: null, a: '', b: '' };
+  var erros = [];
+
+  // ---------- utilidades ----------
+
+  function clonar(o) { return JSON.parse(JSON.stringify(o)); }
+  function $(sel) { return app.querySelector(sel); }
+  function ordinal(n) { return n + 'ª'; }
+
+  function rotuloSalvar() {
+    var s = salvamento.estado;
+    if (s === 'salvando') return '<span class="small texto-2">Salvando…</span>';
+    if (s === 'erro') return '<button class="btn btn-sm btn-perigo" data-acao="tentar-salvar">Não salvou · tentar de novo</button>';
+    return '<span class="small texto-2">Salvo</span>';
+  }
+
+  function atualizarIndicador() {
+    var el = document.getElementById('indicador');
+    if (el) el.innerHTML = rotuloSalvar();
+  }
+
+  // Fila de salvamento: se mudar de novo enquanto salva, salva de novo logo depois com a versão certa.
+  function agendarSalvar(atrasoMs) {
+    salvamento.sujo = true;
+    clearTimeout(salvamento.timer);
+    salvamento.timer = setTimeout(drenar, atrasoMs || 0);
+  }
+
+  function drenar() {
+    if (salvamento.ocupado) return;
+    salvamento.ocupado = true;
+    salvamento.estado = 'salvando';
+    atualizarIndicador();
+    (function passo() {
+      if (!salvamento.sujo) {
+        salvamento.ocupado = false;
+        salvamento.estado = 'ok';
+        atualizarIndicador();
+        return;
+      }
+      salvamento.sujo = false;
+      Estado.salvar(clonar(estado)).then(function (salvo) {
+        estado.versao = salvo.versao;
+        estado.atualizadoEm = salvo.atualizadoEm;
+        passo();
+      }, function (e) {
+        salvamento.ocupado = false;
+        tratarErroDeSalvar(e);
+      });
+    })();
+  }
+
+  function tratarErroDeSalvar(e) {
+    salvamento.estado = 'erro';
+    salvamento.sujo = true; // continua pendente
+    if (e.codigo === 'conflito') {
+      // outro aparelho gravou antes: puxa o que está no servidor e descarta a alteração local
+      salvamento.sujo = false;
+      salvamento.estado = 'ok';
+      Estado.carregar().then(function (novo) {
+        estado = novo;
+        UI.toast('Outro aparelho alterou o torneio. Recarreguei a versão mais nova; refaça a última ação.', 'erro');
+        render();
+      });
+      return;
+    }
+    if (e.codigo === 'sessao') {
+      salvamento.estado = 'ok';
+      logado = false;
+      UI.toast(e.message, 'erro');
+      render();
+      return;
+    }
+    UI.toast(e.message || 'Não foi possível salvar.', 'erro');
+    atualizarIndicador();
+  }
+
+  // Aplica uma alteração numa cópia; se lançar erro (regra violada), mostra o aviso e não muda nada.
+  function mutar(fn, opcoes) {
+    opcoes = opcoes || {};
+    var copia = clonar(estado);
+    try { fn(copia); }
+    catch (e) { UI.toast(e.message, 'erro'); return false; }
+    estado = copia;
+    if (!opcoes.semRender) render();
+    agendarSalvar(opcoes.atraso);
+    return true;
+  }
+
+  // ---------- diálogos ----------
+
+  function abrirDialogo(html) {
+    dlg.innerHTML = '<form method="dialog">' + html + '</form>';
+    dlg.returnValue = '';
+    dlg.showModal();
+    return new Promise(function (ok) { dlg.addEventListener('close', function () { ok(dlg.returnValue); }, { once: true }); });
+  }
+
+  function confirmar(titulo, texto, botao, perigo) {
+    return abrirDialogo('<div class="titulo fs-5 mb-2">' + esc(titulo) + '</div><p class="texto-2">' + texto + '</p>' +
+      '<div class="d-grid gap-2"><button class="btn ' + (perigo ? 'btn-perigo' : 'btn-destaque') + '" value="ok">' + esc(botao) + '</button>' +
+      '<button class="btn btn-fantasma" value="">Cancelar</button></div>').then(function (v) { return v === 'ok'; });
+  }
+
+  function escolher(titulo, texto, opcoes) {
+    return abrirDialogo('<div class="titulo fs-5 mb-2">' + esc(titulo) + '</div><p class="texto-2">' + esc(texto) + '</p><div class="d-grid gap-2">' +
+      opcoes.map(function (o) { return '<button class="btn btn-sec" value="' + esc(o.valor) + '">' + esc(o.rotulo) + '</button>'; }).join('') +
+      '<button class="btn btn-fantasma" value="">Cancelar</button></div>');
+  }
+
+  // ---------- peças de tela ----------
+
+  function cabecalho(titulo, sobre) {
+    return '<header class="topo"><div class="d-flex flex-column"><span class="sobre admin">' + (sobre || 'Modo admin') + '</span><span class="nome">' + esc(titulo) + '</span></div>' +
+      '<div class="d-flex align-items-center gap-2"><span id="indicador">' + rotuloSalvar() + '</span>' +
+      '<button class="pilula" data-acao="sair">Sair</button></div></header>';
+  }
+
+  function abasAdmin() {
+    return '<div class="abas mb-3" role="tablist">' +
+      '<button type="button" class="aba' + (tela === 'torneio' ? ' on' : '') + '" data-acao="tela" data-tela="torneio">Torneio</button>' +
+      '<button type="button" class="aba' + (tela === 'manutencao' ? ' on' : '') + '" data-acao="tela" data-tela="manutencao">Manutenção</button>' +
+      '<a class="aba d-flex align-items-center justify-content-center" href="index.html" target="_blank" rel="noopener" style="text-decoration:none">Ver site ↗</a></div>';
+  }
+
+  function passos(ativo, nomes, feitos) {
+    return '<ol class="passos mb-3">' + nomes.map(function (n, i) {
+      return '<li class="' + (i === ativo ? 'on' : '') + '">' + (i + 1) + ' · ' + n + (i < feitos ? ' ✓' : '') + '</li>';
+    }).join('') + '</ol>';
+  }
+
+  function listaDeErros() {
+    if (!erros.length) return '';
+    return '<div class="alert alert-danger py-2 small" role="alert" style="background:var(--perdedores-escuro);border-color:#5A2A26;color:var(--perdedores)"><ul class="mb-0 ps-3">' +
+      erros.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul></div>';
+  }
+
+  // ---------- login ----------
+
+  function telaLogin() {
+    return '<header class="topo"><div class="d-flex flex-column"><span class="sobre admin">Modo admin</span><span class="nome">Entrar</span></div>' +
+      '<a class="pilula" href="index.html">Voltar ao site</a></header>' +
+      '<form class="cartao p-3 d-flex flex-column gap-3" data-form="login" autocomplete="off">' +
+      '<label class="d-flex flex-column gap-1"><span class="rotulo">Senha do administrador</span>' +
+      '<input id="senha" type="password" class="form-control form-control-lg" autocomplete="current-password" required autofocus></label>' +
+      '<button class="btn btn-destaque" type="submit">Entrar</button>' +
+      '<p class="small texto-2 mb-0">Só quem tem a senha altera o torneio. Todo mundo pode acompanhar pelo site.</p></form>';
+  }
+
+  // ---------- 1. configuração ----------
+
+  function contadorTexto(campo) {
+    var n = estado.config.numDuplas, c = Sorteio.nomes(estado.entrada[campo]).length;
+    var alvo = campo === 'lista' ? 2 * n : n;
+    return c + ' de ' + alvo;
+  }
+
+  function telaConfig() {
+    var c = estado.config, e = estado.entrada;
+    var campo = function (id, rotulo, ajuda, placeholder) {
+      return '<label class="d-flex flex-column gap-1"><span class="d-flex justify-content-between"><span class="rotulo">' + rotulo + '</span>' +
+        '<span class="small texto-2" id="cnt-' + id + '">' + contadorTexto(id) + '</span></span>' +
+        '<textarea class="form-control" data-campo="' + id + '" rows="8" placeholder="' + esc(placeholder) + '" spellcheck="false">' + esc(e[id]) + '</textarea>' +
+        (ajuda ? '<span class="small texto-2">' + ajuda + '</span>' : '') + '</label>';
+    };
+    var campos;
+    if (c.modo === 'prontas') {
+      campos = campo('duplas', 'Duplas formadas', 'Uma dupla por linha, os dois nomes separados por /.', 'Arthur / Matheus\nRafa / Pedro');
+    } else if (c.usarPotes) {
+      campos = campo('pote1', 'Pote 1', 'Um jogador por linha. Cada dupla leva um de cada pote (ex.: os mais fortes no pote 1).', 'Arthur\nRafa\nBruno') +
+        campo('pote2', 'Pote 2', '', 'Matheus\nPedro\nLucas');
+    } else {
+      campos = campo('lista', 'Jogadores', 'Um por linha. As duplas saem do sorteio.', 'Arthur\nRafa\nBruno');
+    }
+    return cabecalho('Configuração') + abasAdmin() + passos(0, ['Jogadores', 'Duplas', 'Chave'], 0) +
+      '<div class="d-flex flex-column gap-3">' +
+      '<label class="d-flex flex-column gap-1"><span class="rotulo">Nome do torneio</span><input class="form-control" data-campo="nome" value="' + esc(c.nome) + '" maxlength="60"></label>' +
+      '<label class="d-flex flex-column gap-1"><span class="rotulo">Número de duplas (4 a 16)</span>' +
+      '<input class="form-control" type="number" inputmode="numeric" min="4" max="16" data-campo="numDuplas" value="' + c.numDuplas + '"></label>' +
+      '<fieldset class="d-flex flex-column gap-2"><legend class="rotulo fs-6 mb-0">Como entram os jogadores</legend>' +
+      '<div class="form-check"><input class="form-check-input" type="radio" name="modo" id="modo-avulsos" value="avulsos" data-campo="modo"' + (c.modo === 'avulsos' ? ' checked' : '') + '><label class="form-check-label" for="modo-avulsos">Jogadores avulsos (o site sorteia as duplas)</label></div>' +
+      '<div class="form-check"><input class="form-check-input" type="radio" name="modo" id="modo-prontas" value="prontas" data-campo="modo"' + (c.modo === 'prontas' ? ' checked' : '') + '><label class="form-check-label" for="modo-prontas">Duplas já formadas (o site sorteia só a ordem na chave)</label></div></fieldset>' +
+      (c.modo === 'avulsos' ? '<div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" id="usarPotes" data-campo="usarPotes"' + (c.usarPotes ? ' checked' : '') + '><label class="form-check-label" for="usarPotes">Usar dois potes (equilibra as duplas)</label></div>' : '') +
+      '<div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" id="finalComReset" data-campo="finalComReset"' + (c.finalComReset ? ' checked' : '') + '><label class="form-check-label" for="finalComReset">Grande final com reset (jogo extra se a dupla de baixo vencer)</label></div>' +
+      campos + listaDeErros() +
+      '<button class="btn btn-destaque" data-acao="ir-sorteio">Ir para o sorteio</button></div>';
+  }
+
+  function lerNumero(v) { var n = parseInt(v, 10); return isNaN(n) ? 0 : n; }
+
+  function irParaSorteio() {
+    var c = estado.config, e = estado.entrada;
+    var r = Sorteio.validar({ n: c.numDuplas, modo: c.modo, usarPotes: c.usarPotes, pote1: e.pote1, pote2: e.pote2, lista: e.lista, duplas: e.duplas });
+    erros = r.erros;
+    if (erros.length) { render(); return; }
+    mutar(function (x) {
+      x.jogadores = r.jogadores;
+      x.duplas = Sorteio.sortear({ jogadores: r.jogadores, pares: r.pares, usarPotes: x.config.usarPotes && x.config.modo === 'avulsos' });
+      x.sorteio = { revelados: 0 };
+      x.jogos = []; x.historico = [];
+      x.fase = 'sorteio';
+    });
+  }
+
+  // ---------- 2. sorteio ----------
+
+  function telaSorteio() {
+    var n = estado.duplas.length, rev = estado.sorteio.revelados, todas = rev >= n;
+    var c = estado.config;
+    var chips = function (lista) { return lista.map(function (j) { return '<span class="chip">' + esc(j.nome) + '</span>'; }).join(''); };
+    var potes = '';
+    if (c.modo === 'avulsos' && c.usarPotes) {
+      potes = '<div class="rotulo">Pote 1 · ' + estado.jogadores.filter(function (j) { return j.pote === 1; }).length + '</div><div class="d-flex flex-wrap gap-2">' + chips(estado.jogadores.filter(function (j) { return j.pote === 1; })) + '</div>' +
+        '<div class="rotulo mt-2">Pote 2 · ' + estado.jogadores.filter(function (j) { return j.pote === 2; }).length + '</div><div class="d-flex flex-wrap gap-2">' + chips(estado.jogadores.filter(function (j) { return j.pote === 2; })) + '</div>';
+    } else {
+      potes = '<div class="rotulo">Jogadores · ' + estado.jogadores.length + '</div><div class="d-flex flex-wrap gap-2">' + chips(estado.jogadores) + '</div>';
+    }
+    var cartas = estado.duplas.map(function (d, i) {
+      var virada = i < rev && i !== animarCarta;
+      return '<div class="col-6"><div class="carta' + (virada ? ' virada' : '') + (i === rev - 1 ? ' ultima' : '') + '" data-carta="' + i + '"><div class="carta-miolo">' +
+        '<div class="carta-verso" aria-label="Carta ainda não revelada">?</div>' +
+        '<div class="carta-frente"><span class="ordem">' + ordinal(i + 1) + ' sorteada · cabeça ' + (i + 1) + '</span><span class="fw-medium" style="font-size:14px">' + (i < rev ? esc(d.nome) : '') + '</span></div></div></div></div>';
+    }).join('');
+    return cabecalho('Sorteio') + abasAdmin() + passos(1, ['Jogadores', 'Duplas', 'Chave'], 1) +
+      '<div class="d-flex flex-column gap-3"><section class="d-flex flex-column gap-2">' + potes + '</section>' +
+      '<section class="row g-2">' + cartas + '</section>' +
+      '<div class="d-flex flex-column gap-2">' +
+      '<button class="btn btn-destaque" data-acao="revelar"' + (todas ? ' disabled' : '') + '>' + (todas ? 'Todas reveladas' : 'Revelar próxima dupla') + '</button>' +
+      (todas ? '' : '<button class="btn btn-fantasma" data-acao="revelar-todas">Revelar todas de uma vez</button>') +
+      '<div class="row g-2"><div class="col-6"><button class="btn btn-fantasma w-100" data-acao="sortear-de-novo">Sortear de novo</button></div>' +
+      '<div class="col-6"><button class="btn btn-sec w-100 h-100" data-acao="confirmar-sorteio"' + (todas ? '' : ' disabled') + '>Confirmar e configurar jogos</button></div></div>' +
+      '<button class="btn btn-link texto-2" data-acao="voltar-config">Voltar e editar os jogadores</button></div></div>';
+  }
+
+  // ---------- 3. configurar jogos ----------
+
+  function presetAtual() {
+    var n = estado.duplas.length;
+    var chaves = Object.keys(Chave.ATALHOS);
+    for (var i = 0; i < chaves.length; i++) {
+      var alvo = Chave.formatosDoAtalho(n, chaves[i]), igual = true;
+      Object.keys(alvo).forEach(function (f) {
+        var a = alvo[f], b = estado.config.formatos[f];
+        if (!b || a.pontos !== b.pontos || a.md !== b.md) igual = false;
+      });
+      if (igual) return chaves[i];
+    }
+    return 'personalizado';
+  }
+
+  function telaConfigJogos() {
+    var preset = presetAtual(), fases = Chave.fasesDoEstado(estado), cfg = estado.config;
+    var atalhos = Object.keys(Chave.ATALHOS).map(function (k) {
+      return '<button class="atalho' + (preset === k ? ' on' : '') + '" data-acao="atalho" data-atalho="' + k + '">' + Chave.ATALHOS[k].nome + '</button>';
+    }).join('') + '<button class="atalho' + (preset === 'personalizado' ? ' on' : '') + '" disabled>Personalizado</button>';
+
+    var minSets = 0, maxSets = 0, total = 0;
+    var linhas = fases.filter(function (f) { return f.jogos > 0; }).map(function (f) {
+      var fm = cfg.formatos[f.id];
+      minSets += f.jogos * Math.ceil(fm.md / 2); maxSets += f.jogos * fm.md; total += f.jogos;
+      var cor = f.chave === 'P' ? 'var(--perdedores)' : (f.chave === 'GF' ? 'var(--texto)' : 'var(--destaque)');
+      var seg = function (campo, valores, atual, fmt) {
+        return '<div class="seg" role="group">' + valores.map(function (v) {
+          return '<button type="button" class="' + (atual === v ? 'on' : '') + '" data-acao="formato" data-fase="' + f.id + '" data-campo="' + campo + '" data-valor="' + v + '" aria-pressed="' + (atual === v) + '">' + fmt(v) + '</button>';
+        }).join('') + '</div>';
+      };
+      return '<div class="p-3 d-flex flex-column gap-2" style="border-bottom:1px solid var(--linha)"><div class="d-flex justify-content-between align-items-baseline">' +
+        '<span class="fw-semibold" style="color:' + cor + '">' + f.nome + '</span><span class="small texto-2">' + f.jogos + (f.jogos > 1 ? ' jogos' : ' jogo') + '</span></div>' +
+        '<div class="row g-2"><div class="col-5">' + seg('pontos', [15, 18], fm.pontos, function (v) { return v + ' pts'; }) + '</div>' +
+        '<div class="col-7">' + seg('md', [1, 3, 5], fm.md, function (v) { return 'MD' + v; }) + '</div></div></div>';
+    }).join('');
+
+    var dec = cfg.setDecisivo;
+    var segDec = '<div class="seg" style="width:170px">' + [[11, '11'], [15, '15'], [null, 'igual']].map(function (o) {
+      return '<button type="button" class="' + (dec === o[0] ? 'on' : '') + '" data-acao="decisivo" data-valor="' + (o[0] === null ? '' : o[0]) + '" aria-pressed="' + (dec === o[0]) + '">' + o[1] + '</button>';
+    }).join('') + '</div>';
+
+    return cabecalho('Configurar jogos') + abasAdmin() + passos(1, ['Sorteio', 'Jogos', 'Iniciar'], 1) +
+      '<div class="d-flex flex-column gap-3"><section class="d-flex flex-column gap-2"><span class="rotulo">Atalhos</span><div class="atalhos">' + atalhos + '</div></section>' +
+      '<section class="cartao overflow-hidden">' + linhas +
+      '<div class="d-flex align-items-center gap-2 p-3"><div class="flex-grow-1 d-flex flex-column"><span class="fw-medium">Set decisivo</span><span class="small texto-2">último set do MD3/MD5</span></div>' + segDec + '</div></section>' +
+      '<section class="row g-2"><div class="col-6"><div class="cartao p-3"><div class="titulo fs-5">' + total + ' jogos</div><span class="small texto-2">' + (cfg.finalComReset ? '+1 se houver reset' : 'sem reset') + '</span></div></div>' +
+      '<div class="col-6"><div class="cartao p-3"><div class="titulo fs-5">' + (minSets === maxSets ? minSets : minSets + ' a ' + maxSets) + ' sets</div><span class="small texto-2">no torneio inteiro</span></div></div></section>' +
+      '<div class="d-flex flex-column gap-2"><button class="btn btn-destaque d-flex align-items-center justify-content-center gap-2" data-acao="iniciar">' + UI.icone.play() + 'Iniciar torneio</button>' +
+      '<p class="small texto-2 text-center mb-0">Depois de iniciar, essa configuração trava. O reset usa a mesma regra da grande final.</p></div></div>';
+  }
+
+  // ---------- 4. placar ----------
+
+  function descreverAcao(a) {
+    if (!a) return '';
+    var g = Chave.jogoPorId(estado, a.jogo);
+    if (a.t === 'set') return 'o placar ' + a.a + ' × ' + a.b + ' do jogo ' + g.id;
+    if (a.t === 'wo') return 'o WO de ' + Chave.nomeDupla(estado, a.faltou) + ' no jogo ' + g.id;
+    return 'a vitória de ' + Chave.nomeDupla(estado, a.vencedor) + ' no jogo ' + g.id;
+  }
+
+  function telaPlacar() {
+    var ctx = UI.contexto(estado), g = ctx.emQuadra;
+    if (!g) return cabecalho('Lançar placar') + abasAdmin() + UI.vazio('Nenhum jogo pronto', 'Os próximos jogos aparecem quando as duplas estiverem definidas.');
+    var f = g.formato, alvo = Chave.alvoDoSet(g);
+    var pa = g.parcial ? g.parcial.a : 0, pb = g.parcial ? g.parcial.b : 0;
+    var nomeA = Chave.nomeDupla(estado, g.duplaA), nomeB = Chave.nomeDupla(estado, g.duplaB);
+    var fechou = Math.max(pa, pb) >= alvo && pa !== pb;
+    var need = Chave.setsParaVencer(g), wins = { a: 0, b: 0 };
+    g.sets.forEach(function (s) { if (s.a > s.b) wins.a++; else wins.b++; });
+    var ganharia = fechou && (pa > pb ? wins.a : wins.b) + 1 >= need;
+    var rotuloFim = ganharia || f.md === 1 ? 'Finalizar jogo' : 'Finalizar set';
+    var indicadorSet = f.md > 1 ? '<div class="small texto-2 text-center">Set ' + (g.sets.length + 1) + ' de ' + f.md + ' · sets: ' + wins.a + '–' + wins.b +
+      (g.sets.length ? ' (' + g.sets.map(function (s) { return s.a + '–' + s.b; }).join(', ') + ')' : '') + '</div>' : '';
+    if (rapido.jogo !== g.id) rapido = { jogo: g.id, aberto: false, venc: null, a: '', b: '' };
+
+    var dupla = function (lado, nome, pts, outro) {
+      var lider = pts > outro;
+      return '<div class="d-flex align-items-center justify-content-between gap-2"><div class="d-flex flex-column" style="min-width:0"><span class="fw-semibold">' + esc(nome) + '</span>' +
+        '<span class="small texto-2">' + derrotasTexto(lado === 'a' ? g.duplaA : g.duplaB) + '</span></div>' +
+        '<div class="d-flex align-items-center gap-2 flex-none"><button class="btn-passo" data-acao="ponto" data-lado="' + lado + '" data-delta="-1" aria-label="Tirar ponto de ' + esc(nome) + '"' + (pts === 0 ? ' disabled' : '') + '>−</button>' +
+        '<span class="pt-grande" style="color:' + (lider ? 'var(--destaque)' : 'var(--texto)') + '">' + pts + '</span>' +
+        '<button class="btn-passo" data-acao="ponto" data-lado="' + lado + '" data-delta="1" aria-label="Somar ponto para ' + esc(nome) + '">+</button></div></div>';
+    };
+
+    var painelNormal = '<div class="d-flex flex-column gap-3">' + dupla('a', nomeA, pa, pb) + '<div style="height:1px;background:var(--linha)"></div>' + dupla('b', nomeB, pb, pa) + indicadorSet +
+      '<button class="btn ' + (fechou ? 'btn-destaque' : 'btn-destaque') + '" data-acao="finalizar"' + (fechou ? '' : ' disabled') + '>' + rotuloFim + '</button>' +
+      '<p class="small texto-2 text-center mb-0">' + (fechou ? 'Confira o placar e finalize.' : 'Use + e − ponto a ponto (o set fecha em ' + alvo + '), ou só o placar final.') + '</p>' +
+      '<button class="btn btn-fantasma" style="border-style:dashed" data-acao="abrir-rapido">Lançar só o resultado final</button></div>';
+
+    var rotPlacar = f.md > 1 ? 'sets ganhos' : 'pontos';
+    var painelRapido = '<div class="d-flex flex-column gap-3"><span class="fw-semibold">Quem venceu?</span>' +
+      '<div class="row g-2"><div class="col-6"><button class="opcao-venc w-100' + (rapido.venc === 'a' ? ' on' : '') + '" data-acao="escolher-venc" data-lado="a" aria-pressed="' + (rapido.venc === 'a') + '">' + esc(nomeA) + '</button></div>' +
+      '<div class="col-6"><button class="opcao-venc w-100' + (rapido.venc === 'b' ? ' on' : '') + '" data-acao="escolher-venc" data-lado="b" aria-pressed="' + (rapido.venc === 'b') + '">' + esc(nomeB) + '</button></div></div>' +
+      '<span class="small texto-2">Placar final (opcional) · ' + rotPlacar + '</span>' +
+      '<div class="row g-2"><label class="col-6 d-flex flex-column gap-1 small texto-2">' + esc(nomeA) + '<input class="form-control text-center titulo fs-4" type="number" inputmode="numeric" min="0" data-campo="rapido-a" placeholder="' + (f.md > 1 ? need : alvo) + '" value="' + esc(rapido.a) + '"></label>' +
+      '<label class="col-6 d-flex flex-column gap-1 small texto-2">' + esc(nomeB) + '<input class="form-control text-center titulo fs-4" type="number" inputmode="numeric" min="0" data-campo="rapido-b" placeholder="' + (f.md > 1 ? need - 1 : 0) + '" value="' + esc(rapido.b) + '"></label></div>' +
+      '<button class="btn btn-destaque" data-acao="confirmar-venc"' + (rapido.venc ? '' : ' disabled') + '>' + (rapido.venc ? 'Confirmar vitória de ' + esc(rapido.venc === 'a' ? nomeA : nomeB) : 'Escolha quem venceu') + '</button>' +
+      '<button class="btn btn-link texto-2" data-acao="fechar-rapido">Voltar ao + e −</button></div>';
+
+    // fila: os próximos prontos, com setas
+    var fila = ctx.prontos.slice(1);
+    var comecou = g.status === 'emQuadra';
+    var filaHtml = fila.map(function (x, i) {
+      return '<div class="item-lista" style="padding:8px 8px 8px 14px"><div class="flex-grow-1 d-flex flex-column" style="min-width:0"><span style="font-size:14px;font-weight:500">' +
+        esc(Chave.nomeDupla(estado, x.duplaA)) + ' × ' + esc(Chave.nomeDupla(estado, x.duplaB)) + '</span><span class="small texto-2">' + x.id + ' · ' + esc(UI.descricaoJogo(estado, x)) + '</span></div>' +
+        '<button class="btn-mini" data-acao="mover" data-jogo-id="' + x.id + '" data-dir="-1" aria-label="Subir na fila"' + (i === 0 && comecou ? ' disabled' : '') + '>' + UI.icone.cima() + '</button>' +
+        '<button class="btn-mini" data-acao="mover" data-jogo-id="' + x.id + '" data-dir="1" aria-label="Descer na fila"' + (i === fila.length - 1 ? ' disabled' : '') + '>' + UI.icone.baixo() + '</button></div>';
+    }).join('');
+    var aguardando = ctx.fila.filter(function (x) { return x.status === 'aguardando'; }).length;
+
+    var pr = Chave.progresso(estado);
+    var normal = '<div class="placar-em-pe"><div class="d-flex flex-column gap-3">' +
+      cabecalho('Lançar placar') + abasAdmin() +
+      '<div class="small texto-2 d-flex justify-content-between"><span>Jogo ' + Math.min(pr.feitos + 1, pr.total) + ' de ' + pr.total + '</span><span>' + estado.duplas.length + ' duplas</span></div>' +
+      '<section class="cartao" style="border-radius:16px;padding:18px"><div class="d-flex justify-content-between small texto-2 mb-3"><span>' + g.id + ' · ' + esc(UI.tituloFase(estado, g)) + '</span><span>MD' + f.md + ' · até <strong style="color:var(--texto)">' + alvo + '</strong></span></div>' +
+      (rapido.aberto ? painelRapido : painelNormal) + '</section>' +
+      '<div class="row g-2"><div class="col-6"><button class="btn btn-fantasma w-100" data-acao="wo">Marcar WO</button></div>' +
+      '<div class="col-6"><button class="btn btn-fantasma w-100" data-acao="desfazer"' + (estado.historico.length ? '' : ' disabled') + '>Desfazer último</button></div></div>' +
+      '<section class="d-flex flex-column gap-2"><h2 class="rotulo m-0">Fila da quadra</h2>' + (filaHtml || '<div class="small texto-2">Nenhum outro jogo pronto agora.</div>') +
+      (aguardando ? '<div class="small texto-2">+ ' + aguardando + ' jogo' + (aguardando > 1 ? 's' : '') + ' esperando as duplas.</div>' : '') + '</section>' +
+      '<div class="d-flex gap-2"><a class="btn btn-sec flex-fill" href="index.html#/chave" target="_blank" rel="noopener">Ver chave</a></div></div></div>';
+
+    // celular deitado: só nomes e números gigantes (CSS esconde o resto)
+    var lado = function (l, nome, pts, lider) {
+      return '<button class="pd-metade" data-acao="ponto" data-lado="' + l + '" data-delta="1" aria-label="Ponto para ' + esc(nome) + '"><span class="nome">' + esc(nome) + '</span>' +
+        '<span class="num" style="color:' + (lider ? 'var(--destaque)' : 'var(--texto)') + '">' + pts + '</span></button>';
+    };
+    var deitado = '<div class="placar-deitado ativo" aria-label="Placar em tela cheia">' +
+      '<div class="pd-topo"><span>' + g.id + ' · ' + esc(UI.tituloFase(estado, g)) + '</span><span class="destaque fw-semibold">MD' + f.md + ' · até ' + alvo + (f.md > 1 ? ' · set ' + (g.sets.length + 1) + ' (' + wins.a + '–' + wins.b + ')' : '') + '</span><span>Toque no lado de quem pontuou</span></div>' +
+      '<div class="pd-meio">' + lado('a', nomeA, pa, pa > pb) + '<div class="pd-divisor"></div>' + lado('b', nomeB, pb, pb > pa) + '</div>' +
+      '<div class="pd-base"><button class="menos" data-acao="ponto" data-lado="a" data-delta="-1" aria-label="Tirar ponto de ' + esc(nomeA) + '"' + (pa === 0 ? ' disabled' : '') + '>−1</button>' +
+      '<button class="fim" data-acao="finalizar"' + (fechou ? '' : ' disabled') + ' style="background:' + (fechou ? 'var(--destaque)' : 'var(--card-2)') + ';color:' + (fechou ? '#0B0D10' : 'var(--texto-2)') + '">' +
+      (fechou ? rotuloFim : rotuloFim + ' (libera quando alguém fechar ' + alvo + ')') + '</button>' +
+      '<button class="menos" data-acao="ponto" data-lado="b" data-delta="-1" aria-label="Tirar ponto de ' + esc(nomeB) + '"' + (pb === 0 ? ' disabled' : '') + '>−1</button></div></div>';
+    return normal + deitado;
+  }
+
+  function derrotasTexto(id) {
+    var d = Chave.derrotas(estado, id);
+    return d === 0 ? 'invicta' : d + (d === 1 ? ' derrota' : ' derrotas');
+  }
+
+  // ---------- 5. encerrado ----------
+
+  function telaEncerrado() {
+    var c = Chave.campeao(estado), cl = Chave.classificacao(estado);
+    return cabecalho('Torneio encerrado') + abasAdmin() +
+      '<div class="d-flex flex-column gap-3"><section class="cartao text-center p-4" style="border-color:var(--destaque)"><div class="destaque mb-1">' + UI.icone.trofeu(32) + '</div>' +
+      '<div class="rotulo destaque">Campeões</div><div class="titulo fs-3">' + esc(Chave.nomeDupla(estado, c)) + '</div></section>' +
+      '<section class="cartao overflow-hidden">' + cl.linhas.map(function (l) {
+        return '<div class="linha-pos"><span class="pos">' + l.pos + '</span><span class="flex-grow-1">' + l.duplas.map(function (d) { return esc(Chave.nomeDupla(estado, d)); }).join(' · ') + '</span><span class="small texto-2">' + esc(l.motivo) + '</span></div>';
+      }).join('') + '</section>' +
+      '<button class="btn btn-fantasma" data-acao="desfazer">Desfazer último resultado</button>' +
+      '<a class="btn btn-sec" href="index.html#/podio" target="_blank" rel="noopener">Ver pódio no site</a></div>';
+  }
+
+  // ---------- manutenção ----------
+
+  function telaManutencao() {
+    var nome = estado.config.nome;
+    return cabecalho('Manutenção') + abasAdmin() +
+      '<div class="d-flex flex-column gap-3">' +
+      '<section class="cartao p-3 d-flex flex-column gap-2"><div class="fw-semibold">Backup</div><p class="small texto-2 mb-1">Baixe o torneio inteiro num arquivo. Serve para guardar ou levar para outro lugar.</p>' +
+      '<button class="btn btn-sec" data-acao="exportar">Exportar JSON</button>' +
+      '<label class="btn btn-fantasma d-flex align-items-center justify-content-center m-0" for="arquivo-import">Importar JSON</label>' +
+      '<input id="arquivo-import" type="file" accept="application/json,.json" class="visually-hidden" data-campo="importar"></section>' +
+      '<section class="cartao p-3 d-flex flex-column gap-2" style="border-color:#5A2A26"><div class="fw-semibold perdedores">Zerar torneio</div>' +
+      '<p class="small texto-2 mb-1">Apaga sorteio, chave e resultados. Não dá para desfazer. Para confirmar, digite o nome do torneio: <strong class="text-white">' + esc(nome) + '</strong></p>' +
+      '<input class="form-control" data-campo="zerar" placeholder="Nome do torneio" autocomplete="off">' +
+      '<button class="btn btn-perigo" data-acao="zerar" id="btn-zerar" disabled>Zerar torneio</button></section>' +
+      '<section class="cartao p-3 d-flex flex-column gap-2"><div class="fw-semibold">Sessão</div>' +
+      '<div class="small texto-2">Modo: ' + (Estado.modo === 'api' ? 'servidor (Vercel)' : 'local (só neste navegador)') + (estado.atualizadoEm ? ' · última alteração ' + new Date(estado.atualizadoEm).toLocaleString('pt-BR') : '') + '</div>' +
+      '<button class="btn btn-fantasma" data-acao="sair">Sair do modo admin</button></section></div>';
+  }
+
+  // ---------- desenho ----------
+
+  function render() {
+    if (!logado) { app.innerHTML = telaLogin(); return; }
+    if (!estado) { app.innerHTML = '<div class="texto-2 py-5 text-center">Carregando…</div>'; return; }
+    var html = '';
+    if (Estado.modo === 'local') html += '<div class="aviso-local mt-2">Modo local: sem servidor e sem senha, os dados ficam só neste navegador.</div>';
+    if (tela === 'manutencao') html += telaManutencao();
+    else if (estado.fase === 'config') html += telaConfig();
+    else if (estado.fase === 'sorteio') html += telaSorteio();
+    else if (estado.fase === 'configJogos') html += telaConfigJogos();
+    else if (estado.fase === 'andamento') html += telaPlacar();
+    else html += telaEncerrado();
+    app.innerHTML = html;
+    if (animarCarta >= 0) {
+      var carta = app.querySelector('[data-carta="' + animarCarta + '"]');
+      animarCarta = -1;
+      // dois frames: o primeiro pinta a carta de costas, o segundo dispara a virada
+      if (carta) requestAnimationFrame(function () { requestAnimationFrame(function () { carta.classList.add('virada'); }); });
+    }
+  }
+
+  // ---------- eventos ----------
+
+  function setNoPonto(g, lado, delta) {
+    var pa = g.parcial ? g.parcial.a : 0, pb = g.parcial ? g.parcial.b : 0;
+    if (lado === 'a') pa = Math.max(0, Math.min(99, pa + delta)); else pb = Math.max(0, Math.min(99, pb + delta));
+    return [pa, pb];
+  }
+
+  var acoes = {
+    'tentar-salvar': function () { agendarSalvar(0); },
+    sair: function () { Estado.sair().then(function () { logado = false; estado = null; render(); }); },
+    tela: function (el) { tela = el.dataset.tela; render(); window.scrollTo(0, 0); },
+    'ir-sorteio': irParaSorteio,
+    'voltar-config': function () { mutar(function (x) { x.fase = 'config'; x.duplas = []; x.sorteio = { revelados: 0 }; }); },
+    revelar: function () {
+      if (estado.sorteio.revelados >= estado.duplas.length) return;
+      animarCarta = estado.sorteio.revelados;
+      mutar(function (x) { x.sorteio.revelados += 1; });
+    },
+    'revelar-todas': function () { mutar(function (x) { x.sorteio.revelados = x.duplas.length; }); },
+    'sortear-de-novo': function () {
+      confirmar('Sortear de novo?', 'O resultado atual do sorteio será descartado.', 'Sortear de novo', true).then(function (ok) {
+        if (!ok) return;
+        mutar(function (x) {
+          var prontas = x.config.modo === 'prontas';
+          x.duplas = Sorteio.sortear({ jogadores: x.jogadores, pares: prontas ? x.duplas.map(function (d) { return d.jogadores; }) : [], usarPotes: x.config.usarPotes && !prontas });
+          x.sorteio = { revelados: 0 };
+        });
+      });
+    },
+    'confirmar-sorteio': function () {
+      confirmar('Confirmar o sorteio?', 'A ordem das duplas na chave fica travada e a chave é gerada. Depois você configura os jogos.', 'Confirmar sorteio').then(function (ok) {
+        if (!ok) return;
+        mutar(function (x) { x.config.formatos = {}; Chave.gerarJogos(x); x.fase = 'configJogos'; });
+      });
+    },
+    atalho: function (el) { mutar(function (x) { x.config.formatos = Chave.formatosDoAtalho(x.duplas.length, el.dataset.atalho); }); },
+    formato: function (el) {
+      mutar(function (x) { x.config.formatos[el.dataset.fase][el.dataset.campo] = Number(el.dataset.valor); });
+    },
+    decisivo: function (el) { mutar(function (x) { x.config.setDecisivo = el.dataset.valor === '' ? null : Number(el.dataset.valor); }); },
+    iniciar: function () {
+      confirmar('Iniciar o torneio?', 'Depois de iniciar, o formato dos jogos trava e não dá mais para mudar o sorteio.', 'Iniciar torneio').then(function (ok) {
+        if (ok) mutar(function (x) { Chave.iniciarTorneio(x); });
+      });
+    },
+    ponto: function (el) {
+      var g = UI.contexto(estado).emQuadra;
+      if (!g) return;
+      var p = setNoPonto(g, el.dataset.lado, Number(el.dataset.delta));
+      mutar(function (x) { Chave.registrarParcial(x, g.id, p[0], p[1]); }, { atraso: 500 });
+    },
+    finalizar: function () {
+      var g = UI.contexto(estado).emQuadra;
+      if (!g || !g.parcial) return;
+      var id = g.id, a = g.parcial.a, b = g.parcial.b;
+      if (mutar(function (x) { Chave.registrarSet(x, id, a, b); })) avisarResultado(id);
+    },
+    'abrir-rapido': function () { rapido.aberto = true; render(); },
+    'fechar-rapido': function () { rapido.aberto = false; render(); },
+    'escolher-venc': function (el) { rapido.venc = el.dataset.lado; render(); },
+    'confirmar-venc': function () {
+      var g = UI.contexto(estado).emQuadra;
+      if (!g || !rapido.venc) return;
+      var id = g.id, venc = rapido.venc === 'a' ? g.duplaA : g.duplaB, placar = { a: rapido.a, b: rapido.b };
+      var anterior = rapido;
+      rapido = { jogo: null, aberto: false, venc: null, a: '', b: '' }; // antes do render, que reinicia o painel para o próximo jogo
+      if (mutar(function (x) { Chave.registrarVencedor(x, id, venc, placar); })) avisarResultado(id);
+      else rapido = anterior;
+    },
+    wo: function () {
+      var g = UI.contexto(estado).emQuadra;
+      if (!g) return;
+      escolher('Marcar WO', 'Qual dupla não compareceu? A outra avança.', [
+        { valor: g.duplaA, rotulo: Chave.nomeDupla(estado, g.duplaA) }, { valor: g.duplaB, rotulo: Chave.nomeDupla(estado, g.duplaB) }
+      ]).then(function (faltou) {
+        if (faltou) { mutar(function (x) { Chave.registrarWO(x, g.id, faltou); }); avisarResultado(g.id); }
+      });
+    },
+    desfazer: function () {
+      var ultima = estado.historico[estado.historico.length - 1];
+      if (!ultima) { UI.toast('Nada para desfazer.', 'erro'); return; }
+      confirmar('Desfazer o último resultado?', 'Vai remover ' + esc(descreverAcao(ultima)) + ' e refazer a chave sem ele.', 'Desfazer', true).then(function (ok) {
+        if (ok) mutar(function (x) { Chave.desfazer(x); });
+      });
+    },
+    mover: function (el) { mutar(function (x) { Chave.moverNaFila(x, el.dataset.jogoId, Number(el.dataset.dir)); }); },
+    exportar: function () {
+      var blob = new Blob([JSON.stringify(estado, null, 2)], { type: 'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'torneio-box-castelandia-' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    },
+    zerar: function () {
+      var nome = estado.config.nome;
+      confirmar('Zerar o torneio?', 'Tudo será apagado: ' + esc(nome) + ', sorteio, chave e resultados.', 'Zerar tudo', true).then(function (ok) {
+        if (!ok) return;
+        mutar(function (x) { var novo = Chave.estadoInicial(); novo.versao = x.versao; Object.keys(x).forEach(function (k) { delete x[k]; }); Object.assign(x, novo); });
+        tela = 'torneio';
+        render();
+      });
+    }
+  };
+
+  // Mostra quem venceu e qual o próximo jogo, depois de lançar um resultado.
+  function avisarResultado(id) {
+    var g = Chave.jogoPorId(estado, id);
+    if (g.status === 'finalizado' || g.status === 'wo') {
+      var prox = UI.contexto(estado).emQuadra;
+      UI.toast(Chave.nomeDupla(estado, g.vencedor) + ' venceu' + (g.status === 'wo' ? ' por WO' : '') + '.' + (prox ? ' Próximo: ' + Chave.nomeDupla(estado, prox.duplaA) + ' × ' + Chave.nomeDupla(estado, prox.duplaB) + '.' : ''));
+    }
+  }
+
+  document.addEventListener('click', function (ev) {
+    var el = ev.target.closest('[data-acao]');
+    if (!el || !acoes[el.dataset.acao] || el.disabled) return;
+    ev.preventDefault();
+    acoes[el.dataset.acao](el);
+  });
+
+  document.addEventListener('submit', function (ev) {
+    if (ev.target.dataset.form !== 'login') return;
+    ev.preventDefault();
+    var senha = document.getElementById('senha').value;
+    Estado.entrar(senha).then(function () { return iniciarSessao(); }).catch(function (e) { UI.toast(e.message, 'erro'); });
+  });
+
+  // Campos de texto: atualizam o estado sem redesenhar (para não perder o foco) e salvam ao sair do campo.
+  document.addEventListener('input', function (ev) {
+    var el = ev.target, campo = el.dataset && el.dataset.campo;
+    if (!campo || !estado) return;
+    if (['pote1', 'pote2', 'lista', 'duplas'].indexOf(campo) !== -1) {
+      estado.entrada[campo] = el.value;
+      var cnt = document.getElementById('cnt-' + campo);
+      if (cnt) cnt.textContent = contadorTexto(campo);
+    } else if (campo === 'rapido-a') rapido.a = el.value;
+    else if (campo === 'rapido-b') rapido.b = el.value;
+    else if (campo === 'zerar') {
+      var b = document.getElementById('btn-zerar');
+      if (b) b.disabled = el.value.trim() !== estado.config.nome;
+    }
+  });
+
+  document.addEventListener('change', function (ev) {
+    var el = ev.target, campo = el.dataset && el.dataset.campo;
+    if (!campo || !estado) return;
+    if (['pote1', 'pote2', 'lista', 'duplas'].indexOf(campo) !== -1) { estado.entrada[campo] = el.value; agendarSalvar(300); return; }
+    if (campo === 'nome') { mutar(function (x) { x.config.nome = el.value.trim() || 'Torneio Box Castelândia'; }, { semRender: true }); return; }
+    if (campo === 'numDuplas') { mutar(function (x) { x.config.numDuplas = lerNumero(el.value); }); return; }
+    if (campo === 'modo') { mutar(function (x) { x.config.modo = el.value; }); return; }
+    if (campo === 'usarPotes' || campo === 'finalComReset') { mutar(function (x) { x.config[campo] = el.checked; }); return; }
+    if (campo === 'importar') importar(el);
+  });
+
+  function importar(el) {
+    var arq = el.files && el.files[0];
+    if (!arq) return;
+    var leitor = new FileReader();
+    leitor.onload = function () {
+      var novo;
+      try { novo = JSON.parse(leitor.result); } catch (e) { UI.toast('Esse arquivo não é um JSON válido.', 'erro'); return; }
+      var ok = novo && typeof novo === 'object' && typeof novo.fase === 'string' && novo.config && Array.isArray(novo.jogos) && Array.isArray(novo.duplas) && Array.isArray(novo.historico);
+      if (!ok) { UI.toast('Esse arquivo não parece um backup do torneio.', 'erro'); return; }
+      confirmar('Importar este torneio?', 'Substitui tudo o que está salvo agora por "' + esc(novo.config.nome || 'torneio') + '" (fase: ' + esc(novo.fase) + ').', 'Importar', true).then(function (sim) {
+        if (!sim) return;
+        mutar(function (x) {
+          var versao = x.versao;
+          Object.keys(x).forEach(function (k) { delete x[k]; });
+          Object.assign(x, Object.assign(Chave.estadoInicial(), novo), { versao: versao });
+        });
+        tela = 'torneio';
+        render();
+        UI.toast('Torneio importado.');
+      });
+    };
+    leitor.readAsText(arq);
+    el.value = '';
+  }
+
+  // ---------- início ----------
+
+  function iniciarSessao() {
+    return Estado.carregar().then(function (e) {
+      estado = e; logado = true; render();
+    });
+  }
+
+  Estado.iniciar().then(function () { return Estado.sessaoAdmin(); }).then(function (admin) {
+    if (!admin) { logado = false; render(); return; }
+    return iniciarSessao();
+  }).catch(function (e) {
+    app.innerHTML = '<div class="cartao p-4 text-center my-5"><div class="titulo fs-5 mb-1">Não deu para carregar</div><div class="texto-2">' + esc(e.message) + '</div><button class="btn btn-sec mt-3" onclick="location.reload()">Tentar de novo</button></div>';
+  });
+
+  // Só para depuração/testes no navegador
+  window.__admin = { estado: function () { return estado; }, salvamento: salvamento };
+})();

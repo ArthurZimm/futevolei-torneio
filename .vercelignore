@@ -1,0 +1,5 @@
+tests/
+docs/
+dev-server.js
+DEPLOY.md
+.env.example
