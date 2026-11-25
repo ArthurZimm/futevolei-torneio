@@ -280,12 +280,12 @@
     } else {
       potes = '<div class="rotulo">Jogadores · ' + estado.jogadores.length + '</div><div class="d-flex flex-wrap gap-2">' + chips(estado.jogadores) + '</div>';
     }
-    // as cartas viram na ordem do sorteio (ordem das cartas); o cabeça de chave de cada dupla aparece na carta
+    // as cartas viram na ordem do sorteio; o cabeça de chave (e quem passa direto) só aparece depois que todas foram reveladas
     var passamDireto = Sorteio.vagasDaChave(n) - n;
     var cartas = ordemDasCartas().map(function (idx, k) {
       var d = estado.duplas[idx], aberta = k < rev;
       var virada = aberta && k !== animarCarta;
-      var etiqueta = aberta ? ordinal(k + 1) + ' sorteada · cabeça ' + d.seed + (d.seed <= passamDireto ? ' · passa direto' : '') : '';
+      var etiqueta = aberta ? ordinal(k + 1) + ' sorteada' + (todas ? ' · cabeça ' + d.seed + (d.seed <= passamDireto ? ' · passa direto' : '') : '') : '';
       return '<div class="col-6"><div class="carta' + (virada ? ' virada' : '') + (k === rev - 1 ? ' ultima' : '') + '" data-carta="' + k + '"><div class="carta-miolo">' +
         '<div class="carta-verso" aria-label="Carta ainda não revelada">?</div>' +
         '<div class="carta-frente"><span class="ordem">' + esc(etiqueta) + '</span><span class="fw-medium" style="font-size:14px">' + (aberta ? esc(d.nome) : '') + '</span></div></div></div></div>';
@@ -296,11 +296,30 @@
       '<div class="d-flex flex-column gap-2">' +
       '<button class="btn btn-destaque" data-acao="revelar"' + (todas ? ' disabled' : '') + '>' + (todas ? 'Todas reveladas' : 'Revelar próxima dupla') + '</button>' +
       (todas ? '' : '<button class="btn btn-fantasma" data-acao="revelar-todas">Revelar todas de uma vez</button>') +
+      '<button class="btn btn-sec" data-acao="salvar-sorteio"' + (todas ? '' : ' disabled') + '>Salvar sorteio (montar a chave depois)</button>' +
+      '<button class="btn btn-fantasma" data-acao="confirmar-sorteio"' + (todas ? '' : ' disabled') + '>Montar a chave agora</button>' +
       '<div class="row g-2"><div class="col-6"><button class="btn btn-fantasma w-100" data-acao="sortear-de-novo">Sortear de novo</button></div>' +
-      '<div class="col-6"><button class="btn btn-sec w-100 h-100" data-acao="confirmar-sorteio"' + (todas ? '' : ' disabled') + '>Confirmar e configurar jogos</button></div></div>' +
-      '<div class="row g-2"><div class="col-6"><button class="btn btn-fantasma w-100" data-acao="baixar-sorteio">Baixar sorteio (JSON)</button></div>' +
-      '<div class="col-6 d-flex flex-column">' + botoesImportarSorteio('btn-fantasma h-100') + '</div></div>' +
+      '<div class="col-6"><button class="btn btn-fantasma w-100 h-100" data-acao="baixar-sorteio">Baixar sorteio (JSON)</button></div></div>' +
+      botoesImportarSorteio('btn-fantasma') +
       '<button class="btn btn-link texto-2" data-acao="voltar-config">Voltar e editar os jogadores</button></div></div>';
+  }
+
+  // ---------- 2b. sorteio salvo (chave ainda não montada) ----------
+
+  function telaSorteado() {
+    var n = estado.duplas.length, passamDireto = Sorteio.vagasDaChave(n) - n;
+    var linhas = estado.duplas.map(function (d) {
+      return '<div class="linha-pos"><span class="pos">' + d.seed + '</span><span class="flex-grow-1">' + esc(d.nome) + '</span>' +
+        (d.seed <= passamDireto ? '<span class="selo selo-v">passa direto</span>' : '') + '</div>';
+    }).join('');
+    return cabecalho('Sorteio salvo') + abasAdmin() + passos(2, ['Jogadores', 'Duplas', 'Chave'], 2) +
+      '<div class="d-flex flex-column gap-3">' +
+      '<p class="texto-2 small mb-0">O sorteio está salvo e o site já mostra as duplas. A chave e os jogos só são criados quando você montar a chave (por exemplo, no dia do torneio).</p>' +
+      '<section class="cartao overflow-hidden">' + linhas + '</section>' +
+      '<button class="btn btn-destaque" data-acao="confirmar-sorteio">Montar a chave e configurar jogos</button>' +
+      '<div class="row g-2"><div class="col-6"><button class="btn btn-fantasma w-100" data-acao="sortear-de-novo">Sortear de novo</button></div>' +
+      '<div class="col-6"><button class="btn btn-fantasma w-100 h-100" data-acao="baixar-sorteio">Baixar sorteio (JSON)</button></div></div>' +
+      '<button class="btn btn-link texto-2" data-acao="voltar-config">Voltar e editar os jogadores</button></div>';
   }
 
   // ---------- 3. configurar jogos ----------
@@ -498,6 +517,7 @@
     if (tela === 'manutencao') html += telaManutencao();
     else if (estado.fase === 'config') html += telaConfig();
     else if (estado.fase === 'sorteio') html += telaSorteio();
+    else if (estado.fase === 'sorteado') html += telaSorteado();
     else if (estado.fase === 'configJogos') html += telaConfigJogos();
     else if (estado.fase === 'andamento') html += telaPlacar();
     else html += telaEncerrado();
@@ -552,7 +572,14 @@
           var prontas = x.config.modo === 'prontas';
           x.duplas = Sorteio.sortear({ jogadores: x.jogadores, pares: prontas ? x.duplas.map(function (d) { return d.jogadores; }) : [], usarPotes: x.config.usarPotes && !prontas });
           x.sorteio = { revelados: 0, ordem: Sorteio.ordemDeRevelacao(x.duplas, x.jogadores) };
+          x.fase = 'sorteio'; // também vale quando o sorteio já estava salvo
         });
+      });
+    },
+    // Guarda as duplas sem criar a chave: o site já mostra o sorteio e a chave fica para depois.
+    'salvar-sorteio': function () {
+      confirmar('Salvar o sorteio?', 'As duplas e os cabeças de chave ficam salvos e aparecem no site. A chave e os jogos só serão criados quando você montar a chave.', 'Salvar sorteio').then(function (ok) {
+        if (ok) mutar(function (x) { x.fase = 'sorteado'; });
       });
     },
     'baixar-sorteio': function () {
@@ -560,7 +587,7 @@
       UI.toast('Sorteio baixado.');
     },
     'confirmar-sorteio': function () {
-      confirmar('Confirmar o sorteio?', 'A ordem das duplas na chave fica travada e a chave é gerada. Depois você configura os jogos.', 'Confirmar sorteio').then(function (ok) {
+      confirmar('Montar a chave?', 'A ordem das duplas na chave fica travada e a chave é gerada. Depois você configura os jogos.', 'Montar a chave').then(function (ok) {
         if (!ok) return;
         mutar(function (x) { x.config.formatos = {}; Chave.gerarJogos(x); x.fase = 'configJogos'; });
       });
@@ -628,7 +655,7 @@
     'novo-torneio': function () {
       var andou = estado.fase !== 'config' || estado.duplas.length > 0;
       var texto = andou
-        ? 'O torneio "' + estado.config.nome + '" (' + (estado.fase === 'encerrado' ? 'encerrado' : 'em andamento') + ') será substituído por um torneio vazio.'
+        ? 'O torneio "' + estado.config.nome + '" (' + (estado.fase === 'encerrado' ? 'encerrado' : estado.fase === 'andamento' ? 'em andamento' : 'só sorteado') + ') será substituído por um torneio vazio.'
         : 'Os jogadores digitados serão apagados e o torneio volta ao início.';
       escolher('Começar um novo torneio?', texto + (andou ? ' Quer baixar um backup dele antes?' : ''), andou
         ? [{ valor: 'backup', rotulo: 'Baixar backup e começar novo' }, { valor: 'sem', rotulo: 'Começar novo sem backup' }]

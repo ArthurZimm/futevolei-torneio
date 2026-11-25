@@ -196,6 +196,9 @@
 
     if (estado.fase === 'config' || estado.fase === 'sorteio') {
       h += UI.vazio('O torneio ainda não começou', 'O sorteio das duplas vai acontecer em breve. Esta página atualiza sozinha.');
+    } else if (estado.fase === 'sorteado') {
+      h += UI.vazio('Sorteio feito!', 'As duplas já estão definidas. A chave e os jogos serão montados no dia do torneio.') +
+        '<a class="btn btn-sec" href="#/sorteio">Ver as duplas sorteadas</a>';
     } else if (estado.fase === 'configJogos') {
       h += UI.vazio('Sorteio feito!', 'As duplas e a chave já estão definidas. Falta o administrador iniciar o torneio.') +
         '<a class="btn btn-sec" href="#/sorteio">Ver as duplas sorteadas</a><a class="btn btn-sec" href="#/chave">Ver a chave</a>';
@@ -248,7 +251,7 @@
 
   UI.viewSorteio = function (estado) {
     var h = UI.cabecalho(estado) + '<main class="d-flex flex-column gap-3">';
-    if (estado.fase === 'config' || estado.fase === 'sorteio' || !estado.jogos.length) {
+    if (estado.fase === 'config' || estado.fase === 'sorteio' || !estado.duplas.length) {
       return h + UI.vazio('Sorteio ainda não confirmado', 'As duplas aparecem aqui assim que o administrador confirmar o sorteio.') + '</main>';
     }
     h += '<div><h2 class="titulo fs-5 mb-1">Duplas sorteadas</h2><p class="texto-2 small mb-0">A ordem é a dos cabeças de chave: a 1ª dupla enfrenta a última, e assim por diante.</p></div>';
@@ -361,7 +364,7 @@
   UI.viewChave = function (estado, aba) {
     aba = aba || 'G';
     var h = '<header class="topo"><div class="d-flex flex-column"><span class="nome">Chave</span><span class="small texto-2">Perdeu 2 vezes, está fora</span></div></header>';
-    if (!estado.jogos.length) return h + UI.vazio('A chave ainda não existe', 'Ela aparece depois do sorteio das duplas.');
+    if (!estado.jogos.length) return h + UI.vazio('A chave ainda não existe', 'Ela aparece quando o administrador montar a chave, depois do sorteio das duplas.');
     var abas = [['G', 'Geral'], ['V', 'Vencedores'], ['P', 'Perdedores'], ['F', 'Finais']];
     h += '<div class="abas mb-3" role="tablist">' + abas.map(function (a) {
       return '<button type="button" role="tab" class="aba' + (aba === a[0] ? ' on' : '') + '" data-aba="' + a[0] + '" aria-selected="' + (aba === a[0]) + '">' + a[1] + '</button>';

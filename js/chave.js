@@ -21,7 +21,7 @@
     return {
       versao: 0,
       atualizadoEm: null,
-      fase: 'config', // config | sorteio | configJogos | andamento | encerrado
+      fase: 'config', // config | sorteio | sorteado (chave ainda não montada) | configJogos | andamento | encerrado
       config: {
         nome: 'Torneio Box Castelândia',
         numDuplas: 8,
