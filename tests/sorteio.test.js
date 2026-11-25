@@ -127,7 +127,7 @@ test('favorito reconhece Arthur e Otávio pelo primeiro nome, sem acento e sem d
   for (const nome of ['Artur', 'Arturo', 'Bruno Arthur', 'Octavio', 'Rafa', '']) assert.equal(Sorteio.favorito(nome), null, nome);
 });
 
-test('Arthur e Otávio em potes diferentes: viram dupla muito mais vezes que o acaso (1/8)', () => {
+test('Arthur e Otávio em potes diferentes: viram dupla mais vezes que o acaso (1/8), mas não em todo sorteio', () => {
   const v = potesComFavoritos(8);
   let juntos = 0;
   const N = 4000;
@@ -136,9 +136,10 @@ test('Arthur e Otávio em potes diferentes: viram dupla muito mais vezes que o a
     if (duplas.some((d) => d.nome === 'Arthur / Otávio')) juntos++;
   }
   const taxa = juntos / N;
-  // 75% forçado + 1/8 dos 25% restantes ≈ 78%
-  assert.ok(taxa > 0.72 && taxa < 0.84, 'taxa de Arthur/Otávio: ' + taxa);
-  assert.ok(taxa > 4 * (1 / 8));
+  // 30% forçado + 1/8 dos 70% restantes ≈ 39%
+  assert.ok(taxa > 0.34 && taxa < 0.44, 'taxa de Arthur/Otávio: ' + taxa);
+  assert.ok(taxa > 2 * (1 / 8));
+  assert.ok(taxa < 0.5);
 });
 
 test('com o favoritismo, os sorteios continuam válidos (um de cada pote, ninguém repetido)', () => {

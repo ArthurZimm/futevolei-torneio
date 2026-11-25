@@ -16,7 +16,7 @@
 
   var MIN_DUPLAS = 4, MAX_DUPLAS = 32;      // os mesmos limites da chave (js/chave.js)
   var FAVORITOS = ['arthur', 'otavio'];     // primeiro nome, sem acento e em minúsculas
-  var CHANCE_DUPLA_FAVORITA = 0.75;         // com potes diferentes, chance de eles virarem dupla
+  var CHANCE_DUPLA_FAVORITA = 0.3;          // com potes diferentes, chance extra de formarem dupla (somada ao acaso)
 
   // Gerador com semente (para testes repetíveis).
   function rngComSemente(a) {
