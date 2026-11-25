@@ -314,3 +314,37 @@ test('importar não confia na dupla do arquivo: o nome é remontado a partir dos
     assert.doesNotMatch(d.nome, /script/);
   });
 });
+
+// ---------- sorteio da chave (quem passa direto) ----------
+
+test('sortearChave: mesmas duplas, cabeças 1..N e ids renumerados junto', () => {
+  const v = potesComFavoritos(7);
+  const { duplas } = sortearPotes(v, 3);
+  const chave = Sorteio.sortearChave(duplas, Sorteio.rngComSemente(9));
+  assert.equal(chave.length, 7);
+  assert.deepEqual(chave.map((d) => d.nome).sort(), duplas.map((d) => d.nome).sort());
+  chave.forEach((d, i) => {
+    assert.equal(d.seed, i + 1);
+    assert.equal(d.id, 'd' + (i + 1));
+    const original = duplas.find((x) => x.nome === d.nome);
+    assert.deepEqual(d.jogadores, original.jogadores);
+  });
+  // não mexe na lista de entrada
+  assert.deepEqual(duplas.map((d) => d.seed), [1, 2, 3, 4, 5, 6, 7]);
+});
+
+test('sortearChave: o bye é sorteado, cada dupla passa direto ~1/7 das vezes (inclusive Arthur/Otávio)', () => {
+  const v = potesComFavoritos(7);
+  const { duplas } = sortearPotes(v, 1);
+  const conta = {};
+  const N = 7000;
+  for (let s = 1; s <= N; s++) {
+    const chave = Sorteio.sortearChave(duplas, Sorteio.rngComSemente(s));
+    const comBye = duplasComBye(chave, v.jogadores);
+    assert.equal(comBye.length, 1);
+    const nome = chave.find((d) => d.id === comBye[0]).nome;
+    conta[nome] = (conta[nome] || 0) + 1;
+  }
+  assert.equal(Object.keys(conta).length, 7);
+  Object.entries(conta).forEach(([nome, c]) => assert.ok(c > 800 && c < 1200, nome + ': ' + c));
+});

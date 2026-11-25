@@ -1,12 +1,13 @@
 /*
  * Sorteio das duplas (sem DOM). Funciona no navegador (window.Sorteio) e no Node (require).
- * A posição de cada dupla na lista é o cabeça de chave (seed 1, 2, 3...). A ordem em que as cartas são
- * reveladas na tela é outra (ordemDeRevelacao), para dar para manter a dupla favorita longe da 1ª carta.
+ * Dois sorteios separados: o das duplas (sortear) e o da chave (sortearChave), que define os cabeças de chave
+ * e, com número ímpar de duplas, quem passa direto. A ordem em que as cartas são reveladas na tela é outra
+ * (ordemDeRevelacao), para dar para manter a dupla favorita longe da 1ª carta.
  *
  * Regras da brincadeira (ver FAVORITOS):
  *   - com potes, se Arthur e Otávio caem em potes diferentes, eles formam dupla com CHANCE_DUPLA_FAVORITA;
  *   - dupla com um dos dois nunca é a primeira a ser revelada.
- * Com número ímpar de duplas, quem passa direto (bye) é só questão de sorteio: os primeiros cabeças.
+ * Com número ímpar de duplas, quem passa direto (bye) só é sorteado na hora de montar a chave.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -183,6 +184,17 @@
   }
 
   /*
+   * Sorteio da chave: embaralha a posição das duplas já sorteadas e renumera os cabeças (e os ids, que seguem o cabeça).
+   * É aqui que se decide quem passa direto (bye) com número ímpar de duplas: os primeiros cabeças.
+   */
+  function sortearChave(duplas, rng) {
+    rng = rng || rngAleatorio();
+    return embaralhar(duplas, rng).map(function (d, i) {
+      return { id: 'd' + (i + 1), nome: d.nome, jogadores: d.jogadores.slice(), seed: i + 1 };
+    });
+  }
+
+  /*
    * Ordem em que as cartas viram na tela: devolve os índices de `duplas` (0 = cabeça 1).
    * Dupla com Arthur ou Otávio nunca é a primeira a sair.
    */
@@ -307,7 +319,7 @@
   return {
     rngComSemente: rngComSemente, rngAleatorio: rngAleatorio, embaralhar: embaralhar,
     nomes: nomes, parseParDeNomes: parseParDeNomes, validar: validar, sortear: sortear,
-    ordemDeRevelacao: ordemDeRevelacao, exportarSorteio: exportarSorteio, lerSorteio: lerSorteio,
+    sortearChave: sortearChave, ordemDeRevelacao: ordemDeRevelacao, exportarSorteio: exportarSorteio, lerSorteio: lerSorteio,
     favorito: favorito, vagasDaChave: vagasDaChave,
     MIN_DUPLAS: MIN_DUPLAS, MAX_DUPLAS: MAX_DUPLAS, FAVORITOS: FAVORITOS, CHANCE_DUPLA_FAVORITA: CHANCE_DUPLA_FAVORITA
   };

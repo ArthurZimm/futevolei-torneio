@@ -280,12 +280,11 @@
     } else {
       potes = '<div class="rotulo">Jogadores · ' + estado.jogadores.length + '</div><div class="d-flex flex-wrap gap-2">' + chips(estado.jogadores) + '</div>';
     }
-    // as cartas viram na ordem do sorteio; o cabeça de chave (e quem passa direto) só aparece depois que todas foram reveladas
-    var passamDireto = Sorteio.vagasDaChave(n) - n;
+    // as cartas viram na ordem do sorteio; cabeça de chave e bye só são sorteados depois, quando a chave for montada
     var cartas = ordemDasCartas().map(function (idx, k) {
       var d = estado.duplas[idx], aberta = k < rev;
       var virada = aberta && k !== animarCarta;
-      var etiqueta = aberta ? ordinal(k + 1) + ' sorteada' + (todas ? ' · cabeça ' + d.seed + (d.seed <= passamDireto ? ' · passa direto' : '') : '') : '';
+      var etiqueta = aberta ? ordinal(k + 1) + ' sorteada' : '';
       return '<div class="col-6"><div class="carta' + (virada ? ' virada' : '') + (k === rev - 1 ? ' ultima' : '') + '" data-carta="' + k + '"><div class="carta-miolo">' +
         '<div class="carta-verso" aria-label="Carta ainda não revelada">?</div>' +
         '<div class="carta-frente"><span class="ordem">' + esc(etiqueta) + '</span><span class="fw-medium" style="font-size:14px">' + (aberta ? esc(d.nome) : '') + '</span></div></div></div></div>';
@@ -307,14 +306,12 @@
   // ---------- 2b. sorteio salvo (chave ainda não montada) ----------
 
   function telaSorteado() {
-    var n = estado.duplas.length, passamDireto = Sorteio.vagasDaChave(n) - n;
-    var linhas = estado.duplas.map(function (d) {
-      return '<div class="linha-pos"><span class="pos">' + d.seed + '</span><span class="flex-grow-1">' + esc(d.nome) + '</span>' +
-        (d.seed <= passamDireto ? '<span class="selo selo-v">passa direto</span>' : '') + '</div>';
+    var linhas = ordemDasCartas().map(function (idx, k) {
+      return '<div class="linha-pos"><span class="pos">' + (k + 1) + '</span><span class="flex-grow-1">' + esc(estado.duplas[idx].nome) + '</span></div>';
     }).join('');
     return cabecalho('Sorteio salvo') + abasAdmin() + passos(2, ['Jogadores', 'Duplas', 'Chave'], 2) +
       '<div class="d-flex flex-column gap-3">' +
-      '<p class="texto-2 small mb-0">O sorteio está salvo e o site já mostra as duplas. A chave e os jogos só são criados quando você montar a chave (por exemplo, no dia do torneio).</p>' +
+      '<p class="texto-2 small mb-0">O sorteio das duplas está salvo e o site já mostra as duplas. Ao montar a chave (por exemplo, no dia do torneio) é feito o sorteio da chave: a posição de cada dupla e, se o número de duplas for ímpar, quem passa direto.</p>' +
       '<section class="cartao overflow-hidden">' + linhas + '</section>' +
       '<button class="btn btn-destaque" data-acao="confirmar-sorteio">Montar a chave e configurar jogos</button>' +
       '<div class="row g-2"><div class="col-6"><button class="btn btn-fantasma w-100" data-acao="sortear-de-novo">Sortear de novo</button></div>' +
@@ -578,7 +575,7 @@
     },
     // Guarda as duplas sem criar a chave: o site já mostra o sorteio e a chave fica para depois.
     'salvar-sorteio': function () {
-      confirmar('Salvar o sorteio?', 'As duplas e os cabeças de chave ficam salvos e aparecem no site. A chave e os jogos só serão criados quando você montar a chave.', 'Salvar sorteio').then(function (ok) {
+      confirmar('Salvar o sorteio?', 'As duplas ficam salvas e aparecem no site. A chave, quem passa direto e os jogos só são sorteados quando você montar a chave.', 'Salvar sorteio').then(function (ok) {
         if (ok) mutar(function (x) { x.fase = 'sorteado'; });
       });
     },
@@ -587,9 +584,20 @@
       UI.toast('Sorteio baixado.');
     },
     'confirmar-sorteio': function () {
-      confirmar('Montar a chave?', 'A ordem das duplas na chave fica travada e a chave é gerada. Depois você configura os jogos.', 'Montar a chave').then(function (ok) {
+      var impar = estado.duplas.length % 2 === 1;
+      confirmar('Montar a chave?', 'Sorteia a posição de cada dupla na chave' + (impar ? ' e quem passa direto (número ímpar de duplas)' : '') + '. Depois que a chave é montada, a ordem fica travada. Em seguida você configura os jogos.', 'Sortear e montar a chave').then(function (ok) {
         if (!ok) return;
-        mutar(function (x) { x.config.formatos = {}; Chave.gerarJogos(x); x.fase = 'configJogos'; });
+        mutar(function (x) {
+          x.duplas = Sorteio.sortearChave(x.duplas);
+          x.sorteio.ordem = x.duplas.map(function (d, i) { return i; });
+          x.config.formatos = {};
+          Chave.gerarJogos(x);
+          x.fase = 'configJogos';
+        });
+        var passam = estado.jogos.filter(function (g) { return g.fase === 'V-R1' && g.bye; }).map(function (g) {
+          return Chave.nomeDupla(estado, g.duplaA === Chave.BYE ? g.duplaB : g.duplaA);
+        });
+        if (passam.length) UI.toast('Passa direto: ' + passam.join(', ') + '.');
       });
     },
     atalho: function (el) { mutar(function (x) { x.config.formatos = Chave.formatosDoAtalho(x.duplas.length, el.dataset.atalho); }); },

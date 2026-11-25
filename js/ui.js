@@ -197,7 +197,7 @@
     if (estado.fase === 'config' || estado.fase === 'sorteio') {
       h += UI.vazio('O torneio ainda não começou', 'O sorteio das duplas vai acontecer em breve. Esta página atualiza sozinha.');
     } else if (estado.fase === 'sorteado') {
-      h += UI.vazio('Sorteio feito!', 'As duplas já estão definidas. A chave e os jogos serão montados no dia do torneio.') +
+      h += UI.vazio('Sorteio feito!', 'As duplas já estão definidas. A chave e quem passa direto serão sorteados no dia do torneio.') +
         '<a class="btn btn-sec" href="#/sorteio">Ver as duplas sorteadas</a>';
     } else if (estado.fase === 'configJogos') {
       h += UI.vazio('Sorteio feito!', 'As duplas e a chave já estão definidas. Falta o administrador iniciar o torneio.') +
@@ -253,6 +253,15 @@
     var h = UI.cabecalho(estado) + '<main class="d-flex flex-column gap-3">';
     if (estado.fase === 'config' || estado.fase === 'sorteio' || !estado.duplas.length) {
       return h + UI.vazio('Sorteio ainda não confirmado', 'As duplas aparecem aqui assim que o administrador confirmar o sorteio.') + '</main>';
+    }
+    if (!estado.jogos.length) {
+      // chave ainda não sorteada: só as duplas, na ordem em que saíram (sem cabeça de chave nem bye)
+      var o = estado.sorteio && estado.sorteio.ordem, n = estado.duplas.length;
+      var ordem = Array.isArray(o) && o.length === n ? o : estado.duplas.map(function (d, i) { return i; });
+      h += '<div><h2 class="titulo fs-5 mb-1">Duplas sorteadas</h2><p class="texto-2 small mb-0">Na ordem em que saíram do sorteio. A chave ainda vai ser sorteada.</p></div>';
+      return h + '<div class="d-flex flex-column gap-2">' + ordem.map(function (idx, k) {
+        return '<div class="item-lista"><span class="n">' + (k + 1) + '</span><span class="flex-grow-1 fw-semibold">' + esc(estado.duplas[idx].nome) + '</span></div>';
+      }).join('') + '</div></main>';
     }
     h += '<div><h2 class="titulo fs-5 mb-1">Duplas sorteadas</h2><p class="texto-2 small mb-0">A ordem é a dos cabeças de chave: a 1ª dupla enfrenta a última, e assim por diante.</p></div>';
     h += '<div class="d-flex flex-column gap-2">' + estado.duplas.map(function (d) {
